@@ -1,0 +1,55 @@
+# Model Configuration
+model:
+  name: "unsloth/Qwen2.5-7B-Instruct"
+  max_seq_length: 1024
+  load_in_4bit: true
+
+# LoRA Configuration
+lora:
+  r: 64                  # Rank - adjust based on dataset size
+  alpha: 64
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+# Training Configuration
+training:
+  num_epochs: 3
+  batch_size: 4
+  gradient_accumulation_steps: 4  # Effective batch = 16
+  learning_rate: 2.0e-4
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  packing: false                  # Better for style tuning
+
+  # Evaluation
+  eval_steps: 50
+  logging_steps: 10
+
+  # Checkpointing
+  save_steps: 100
+  save_total_limit: 3
+
+# Data Configuration
+data:
+  train_file: "data/processed/train.jsonl"
+  val_file: "data/processed/val.jsonl"
+
+# Run Naming
+run_name: "mystyle"
+output_base: "outputs"
+
+# Early Stopping
+early_stopping:
+  enabled: true
+  patience: 5
+  threshold: 0.001
+
+# Reproducibility
+seed: 42
