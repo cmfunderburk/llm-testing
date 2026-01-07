@@ -66,7 +66,7 @@
       "features": ["FEAT-014", "FEAT-015", "FEAT-016"],
       "entry_criteria": "Phase 3 complete, attention intuition established",
       "exit_criteria": "Activation extraction tooling works, documented probing experiments, self-assessment doc on representations",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "phase": 5,
@@ -314,7 +314,7 @@
       "phase": 4,
       "description": "Build tooling to extract intermediate activations (residual stream values) from model.",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Can extract activations from any layer",
@@ -330,7 +330,7 @@
       "phase": 4,
       "description": "Analyze what information is encoded in activations. Layer-by-layer transformation tracking.",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Activation statistics computed and visualized",
@@ -346,7 +346,7 @@
       "phase": 4,
       "description": "Write self-assessment on representations and residual stream. Track C retrospective.",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Self-assessment covers: residual stream, FFN transformations, how information accumulates",
