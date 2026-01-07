@@ -1,6 +1,6 @@
 ---
 active: true
-iteration: 2
+iteration: 3
 max_iterations: 10
 completion_promise: "LLM-LEARNING-LAB-COMPLETE"
 started_at: "2026-01-07T16:42:18Z"

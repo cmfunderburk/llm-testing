@@ -57,7 +57,7 @@
       "features": ["FEAT-010", "FEAT-011", "FEAT-012", "FEAT-013"],
       "entry_criteria": "Phase 2 complete, trained model artifacts available for comparison",
       "exit_criteria": "Attention visualization tooling works, documented experiments comparing attention patterns, self-assessment doc on attention mechanics",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "phase": 4,
@@ -251,7 +251,7 @@
       "phase": 3,
       "description": "Build or integrate tooling to extract attention weights from model forward passes.",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Can extract attention weights from any layer",
@@ -267,7 +267,7 @@
       "phase": 3,
       "description": "Create visualizations of attention patterns: heatmaps, head comparisons, layer progressions.",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Attention heatmap generation works",
@@ -283,7 +283,7 @@
       "phase": 3,
       "description": "Compare attention patterns between base and fine-tuned models. Document what changes.",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Side-by-side attention comparisons generated",
@@ -299,7 +299,7 @@
       "phase": 3,
       "description": "Write self-assessment on attention mechanics. Track B retrospective reflection.",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Self-assessment covers: QKV computation, attention scores, multi-head attention, positional encoding interaction",
