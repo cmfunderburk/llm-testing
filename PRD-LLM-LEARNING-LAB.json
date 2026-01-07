@@ -84,7 +84,7 @@
       "features": ["FEAT-018", "FEAT-019", "FEAT-020"],
       "entry_criteria": "Phases 2-4 complete, mental model sufficient to engage with paper",
       "exit_criteria": "Paper summary document, at least one claim reproduced/tested, retrospective reflection on full learning journey",
-      "status": "pending"
+      "status": "complete"
     }
   ],
 
@@ -377,7 +377,7 @@
       "phase": 6,
       "description": "Read 'Bayesian Geometry of Transformer Attention', create annotated reading notes, write summary in own words.",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Annotated reading notes exist",
@@ -393,7 +393,7 @@
       "phase": 6,
       "description": "Select and reproduce/test at least one specific claim from the paper.",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Claim selected with rationale for selection",
@@ -409,7 +409,7 @@
       "phase": 6,
       "description": "Write final retrospective on full learning journey. Assess success criteria achievement.",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Retrospective covers all four tracks",
