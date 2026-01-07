@@ -48,7 +48,7 @@
       "features": ["FEAT-005", "FEAT-006", "FEAT-007", "FEAT-008", "FEAT-009"],
       "entry_criteria": "Phase 1 complete, instrumented training script ready",
       "exit_criteria": "At least 3 documented experiments with hypotheses and learnings, self-assessment doc on training dynamics, 'minimum interesting experiment' question answered",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "phase": 3,
@@ -162,7 +162,7 @@
       "phase": 2,
       "description": "Instrumented experiment to understand what loss curves tell us. Log detailed metrics, visualize, document interpretation.",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Training script logs loss at configurable granularity",
@@ -181,7 +181,7 @@
       "phase": 2,
       "description": "Experiment varying learning rates to observe effects on training dynamics and final model behavior.",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Multiple training runs with different learning rates completed",
@@ -200,7 +200,7 @@
       "phase": 2,
       "description": "Compare different LoRA ranks (8, 16, 32, 64) on training dynamics and model behavior.",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Training runs with multiple LoRA ranks completed",
@@ -219,7 +219,7 @@
       "phase": 2,
       "description": "Test whether fine-tuned model loses general capabilities. Design forgetting benchmark and measure.",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Forgetting test suite created (math, reasoning, code tasks)",
@@ -235,7 +235,7 @@
       "phase": 2,
       "description": "Write self-assessment document explaining training dynamics concepts in own words. Answer 'minimum interesting experiment' question.",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Self-assessment doc covers: forward/backward pass, loss landscapes, optimizer state, batch size/LR interaction",
