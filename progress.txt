@@ -1,0 +1,41 @@
+## progress.txt (append-only)
+
+### Iteration 1 - Ralph Loop Started
+- Reading PRD-LLM-LEARNING-LAB.json and DESIGN-PRINCIPLES.md
+- Phase 1 entry criteria verified: VISION.md exists, test_finetune.py exists
+- Beginning Phase 1: Infrastructure & Foundation
+- Working on FEAT-001: Codebase Restructure
+
+### Phase 1 Complete
+- FEAT-001: Codebase Restructure - DONE
+  - Created experiments/ directory structure
+  - Created experiments/__init__.py, experiments/fine_tuning/__init__.py
+  - Created experiments/fine_tuning/basic_qlora.py (learning-focused training script)
+  - Created README.md reflecting learning lab purpose
+  - Verified: `python -c "import experiments"` works
+
+- FEAT-002: Documentation Framework - DONE
+  - Created docs/concepts/ directory
+  - Created docs/concepts/TEMPLATE.md (concept documentation template)
+  - Created docs/concepts/qlora.md (example concept doc)
+  - Verified: `test -d docs/concepts` passes
+
+- FEAT-003: Questions Log - DONE
+  - Created QUESTIONS.md with questions from VISION.md
+  - Format supports status tracking (OPEN/EXPLORING/ANSWERED/SUPERSEDED)
+  - Per-experiment question convention documented
+  - Verified: `test -f QUESTIONS.md` passes
+
+- FEAT-004: Experiment Template - DONE
+  - Created experiments/EXPERIMENT_TEMPLATE.py with full structure
+  - Template includes: hypothesis, methodology, results, learnings sections
+  - Updated basic_qlora.py to include RESULTS and LEARNINGS sections
+  - Verified: grep finds 'hypothesis' in experiment files
+
+Phase 1 EXIT CRITERIA MET:
+- Codebase restructured to experiments/ focus
+- docs/concepts/ exists with template
+- QUESTIONS.md initialized
+- First instrumented experiment ready to run
+
+STOPPING: Per instructions, asking for approval before Phase 2

@@ -39,7 +39,7 @@
       "features": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
       "entry_criteria": "Vision document exists, basic QLoRA script works",
       "exit_criteria": "Codebase restructured, docs/concepts/ exists, QUESTIONS.md initialized, first instrumented experiment ready to run",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "phase": 2,
@@ -95,7 +95,7 @@
       "phase": 1,
       "description": "Refactor qwen-finetune/ to be explicitly learning-focused. Rename/reorganize to reflect experimental purpose rather than production pipeline.",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Directory structure reflects learning focus (e.g., experiments/ not scripts/)",
@@ -114,7 +114,7 @@
       "phase": 1,
       "description": "Create docs/concepts/ directory structure for capturing learnings. Establish template for concept docs.",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "docs/concepts/ directory exists",
@@ -130,7 +130,7 @@
       "phase": 1,
       "description": "Create QUESTIONS.md as central questions log. Establish convention for per-experiment questions.",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "QUESTIONS.md exists with initial open questions from VISION.md",
@@ -146,7 +146,7 @@
       "phase": 1,
       "description": "Create template for instrumented experiments: hypothesis section, code with inline comments, results section, learnings section.",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Experiment template exists (Python file or notebook structure)",
