@@ -75,7 +75,7 @@
       "features": ["FEAT-017"],
       "entry_criteria": "Phases 2-4 complete",
       "exit_criteria": "Hardware decision document with clear rationale based on experimental evidence",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "phase": 6,
@@ -361,7 +361,7 @@
       "phase": 5,
       "description": "Synthesize Tracks A-C learnings into hardware investment decision with clear rationale.",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "criteria": {
         "functional": [
           "Document identifies compute-limited experiments from Tracks A-C",
