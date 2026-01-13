@@ -1,0 +1,6 @@
+The quick brown fox jumps over the lazy dog.
+Machine learning is transforming the world of artificial intelligence.
+Large language models can generate human-like text.
+Training neural networks requires large amounts of data.
+Transformers revolutionized natural language processing.
+Attention mechanisms allow models to focus on relevant parts of the input.
