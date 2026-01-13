@@ -63,7 +63,26 @@ Started: 2026-01-12
 ---
 
 ### Phase 3: Backend API
-[Not started]
+
+#### Completed
+- [2026-01-12] FEAT-012: FastAPI Server - Health endpoint, CORS configured for frontend, uvicorn runner
+- [2026-01-12] FEAT-013: WebSocket Training Stream - Real-time metrics broadcast, heartbeat, reconnection handling
+- [2026-01-12] FEAT-014: Training Control Endpoints - POST start/pause/resume/stop, GET status
+- [2026-01-12] FEAT-015: Analysis Endpoints - GET/POST checkpoints, POST generate, POST analyze/attention
+
+#### Issues Encountered
+- None
+
+#### Verification Results
+- Health endpoint returns {"status":"ok"} - PASS
+- Training status returns idle state - PASS
+- Checkpoints list returns empty array (no checkpoints yet) - PASS
+- Server starts on port 8000 with uvicorn - PASS
+
+#### Files Created
+- experiments/pretraining/api/__init__.py - Package init
+- experiments/pretraining/api/main.py - FastAPI app with all endpoints
+- experiments/pretraining/api/routes/__init__.py - Routes package placeholder
 
 ---
 
@@ -85,5 +104,5 @@ Started: 2026-01-12
 ## Summary Statistics
 | Metric | Count |
 |--------|-------|
-| Features completed | 11/28 |
-| Phases completed | 2/6 |
+| Features completed | 15/28 |
+| Phases completed | 3/6 |
