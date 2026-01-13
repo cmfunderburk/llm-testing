@@ -115,7 +115,31 @@ Started: 2026-01-12
 ---
 
 ### Phase 5: Real-time Dashboard
-[Not started]
+
+#### Completed
+- [2026-01-12] FEAT-020: Loss Curve Chart - Recharts LineChart with train/val loss, tooltips, legend
+- [2026-01-12] FEAT-021: Learning Rate Display - AreaChart showing warmup + cosine decay schedule
+- [2026-01-12] FEAT-022: Token Counter - Token statistics with throughput bar indicator
+- [2026-01-12] FEAT-023: Sample Text Display - Most recent epoch-end generation sample
+- [2026-01-12] FEAT-024: Progress Indicators - Step/epoch progress bars with time estimates
+
+#### Issues Encountered
+- Recharts Tooltip formatter TypeScript types needed explicit type guards
+- Bundle size increased to 570KB due to Recharts (expected)
+
+#### Verification Results
+- npm run build completes successfully
+- All chart components compile without errors
+- Dashboard layout displays all visualization components
+
+#### Files Created
+- experiments/pretraining/frontend/src/components/dashboard/LossChart.tsx
+- experiments/pretraining/frontend/src/components/dashboard/LearningRateChart.tsx
+- experiments/pretraining/frontend/src/components/dashboard/TokenCounter.tsx
+- experiments/pretraining/frontend/src/components/dashboard/SampleTextDisplay.tsx
+- experiments/pretraining/frontend/src/components/dashboard/ProgressIndicators.tsx
+- Updated App.tsx with new dashboard layout
+- Updated App.css with Phase 5 component styles
 
 ---
 
@@ -127,5 +151,5 @@ Started: 2026-01-12
 ## Summary Statistics
 | Metric | Count |
 |--------|-------|
-| Features completed | 19/28 |
-| Phases completed | 4/6 |
+| Features completed | 24/28 |
+| Phases completed | 5/6 |

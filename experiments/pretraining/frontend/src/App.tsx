@@ -8,7 +8,15 @@ import { useState, useEffect } from 'react';
 import { TrainingProvider, useTraining } from './context/TrainingContext';
 import { useWebSocket } from './hooks/useWebSocket';
 import { Layout } from './components/layout';
-import { TrainingControls, MetricsDisplay, GenerationLog } from './components/dashboard';
+import {
+  TrainingControls,
+  MetricsDisplay,
+  LossChart,
+  LearningRateChart,
+  TokenCounter,
+  SampleTextDisplay,
+  ProgressIndicators,
+} from './components/dashboard';
 import './App.css';
 
 // WebSocket URL
@@ -64,10 +72,16 @@ function AppContent() {
           <div className="dashboard-view">
             <div className="dashboard-main">
               <MetricsDisplay />
-              <GenerationLog />
+              <LossChart />
+              <div className="dashboard-charts-row">
+                <LearningRateChart />
+                <TokenCounter />
+              </div>
+              <SampleTextDisplay />
             </div>
-            <div className="dashboard-sidebar">
+            <div className="dashboard-right-column">
               <TrainingControls />
+              <ProgressIndicators />
             </div>
           </div>
         );
