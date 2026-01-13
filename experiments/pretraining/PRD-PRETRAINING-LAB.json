@@ -1,0 +1,713 @@
+{
+  "task": {
+    "name": "LLM Pretraining Lab",
+    "description": "Build a hands-on platform for understanding LLM pretraining from scratch, featuring a GPT implementation following Raschka's 'Build a Large Language Model (From Scratch)' book, with a modern React + TypeScript frontend that provides real-time training visualization and post-hoc analysis tools. The goal is mental model formation about transformer architecture and training dynamics.",
+    "created": "2026-01-12T15:00:00Z",
+    "vision_source": "VISION.md + interview session",
+    "project_type": "learning",
+    "completion_promise": "PRETRAINING-LAB-COMPLETE"
+  },
+
+  "context": {
+    "codebase_state": "active",
+    "primary_language": "Python",
+    "secondary_languages": ["TypeScript", "JavaScript"],
+    "frameworks": ["PyTorch", "FastAPI", "React", "WebSocket"],
+    "vision_extraction": {
+      "primary_goal": "Build mental model of LLM pretraining deep enough to understand training dynamics and transformer internals",
+      "success_criteria": [
+        "Can explain transformer architecture without referencing materials",
+        "Can predict training behavior before running experiments",
+        "Can diagnose training issues from loss curves and metrics",
+        "Can interactively explore model internals via frontend"
+      ],
+      "deliverables": [
+        "GPT model implementation from scratch",
+        "Configurable training pipeline",
+        "React + TypeScript frontend with real-time visualization",
+        "Post-hoc analysis tools for attention and activations"
+      ]
+    },
+    "gap_analysis_summary": "No existing transformer implementation - must build from scratch. Training loop patterns (~80% reusable). No web frontend exists. Visualization patterns exist in matplotlib but building fresh JS visualizations.",
+    "resource_constraints": {
+      "compute": "RTX 5060 Ti 16GB VRAM, 64GB RAM - limits model to ~355M params max",
+      "storage": "Checkpoint storage opt-in due to disk space concerns",
+      "time_budget": null
+    },
+    "canonical_sources": [
+      "Raschka, 'Build a Large Language Model (From Scratch)' - Chapter 4 (GPT architecture)",
+      "Raschka, 'Build a Large Language Model (From Scratch)' - Chapter 5 (Pretraining)",
+      "Vaswani et al., 'Attention Is All You Need' (2017)"
+    ],
+    "reference_materials": {
+      "location": "docs/book-chapters/text/",
+      "key_files": [
+        "04-implementing-gpt-model.txt",
+        "05-pretraining-on-unlabeled-data.txt",
+        "02-working-with-text-data.txt",
+        "03-coding-attention-mechanisms.txt"
+      ]
+    }
+  },
+
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Core Architecture",
+      "description": "Implement GPT model from scratch with all transformer components, plus tokenizer and data pipeline",
+      "features": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004", "FEAT-005", "FEAT-006"],
+      "depends_on": [],
+      "gates_phases": [2],
+      "entry_criteria": "Repository structure exists, PyTorch available",
+      "exit_criteria": "Model forward pass works with correct tensor shapes, tokenizer encodes/decodes correctly, data loader produces batches",
+      "gate_verification": "python -c \"from experiments.pretraining.model import GPTModel; from experiments.pretraining.data import get_dataloader; print('Phase 1 gate passed')\""
+    },
+    {
+      "phase": 2,
+      "name": "Training Infrastructure",
+      "description": "Implement training loop with loss computation, optimization, checkpointing, and CLI interface",
+      "features": ["FEAT-007", "FEAT-008", "FEAT-009", "FEAT-010", "FEAT-011"],
+      "depends_on": [1],
+      "gates_phases": [3],
+      "entry_criteria": "Phase 1 complete - model and data pipeline working",
+      "exit_criteria": "Training completes 1 epoch without errors, checkpoint saves and loads correctly, CLI accepts config arguments",
+      "gate_verification": "python -m experiments.pretraining.train --config nano --epochs 1 --corpus verdict"
+    },
+    {
+      "phase": 3,
+      "name": "Backend API",
+      "description": "FastAPI server with WebSocket support for real-time training updates and REST endpoints for analysis",
+      "features": ["FEAT-012", "FEAT-013", "FEAT-014", "FEAT-015"],
+      "depends_on": [2],
+      "gates_phases": [4],
+      "entry_criteria": "Phase 2 complete - training infrastructure working",
+      "exit_criteria": "API endpoints respond correctly, WebSocket accepts connections and streams mock data",
+      "gate_verification": "curl -s http://localhost:8000/api/health | grep -q 'ok'"
+    },
+    {
+      "phase": 4,
+      "name": "Frontend Foundation",
+      "description": "React + TypeScript application with WebSocket client, routing, and basic component structure",
+      "features": ["FEAT-016", "FEAT-017", "FEAT-018", "FEAT-019"],
+      "depends_on": [3],
+      "gates_phases": [5, 6],
+      "entry_criteria": "Phase 3 complete - backend API running",
+      "exit_criteria": "Frontend builds and serves, WebSocket connects to backend, basic UI renders",
+      "gate_verification": "curl -s http://localhost:3000 | grep -q 'Pretraining Lab'"
+    },
+    {
+      "phase": 5,
+      "name": "Real-time Dashboard",
+      "description": "Live training visualization with loss curves, metrics display, sample generations, and training controls",
+      "features": ["FEAT-020", "FEAT-021", "FEAT-022", "FEAT-023", "FEAT-024"],
+      "depends_on": [4],
+      "gates_phases": [],
+      "entry_criteria": "Phase 4 complete - frontend foundation working",
+      "exit_criteria": "Loss curves update in real-time during training, metrics display correctly, sample generations appear at intervals",
+      "gate_verification": "Manual verification: start training run, observe live updates in browser"
+    },
+    {
+      "phase": 6,
+      "name": "Analysis Tools",
+      "description": "Post-hoc analysis interface for exploring checkpoints, attention patterns, and activation visualizations",
+      "features": ["FEAT-025", "FEAT-026", "FEAT-027", "FEAT-028"],
+      "depends_on": [4],
+      "gates_phases": [],
+      "entry_criteria": "Phase 4 complete - frontend foundation working",
+      "exit_criteria": "Checkpoint browser works, attention heatmaps render, activation visualizations display",
+      "gate_verification": "Manual verification: load checkpoint, view attention patterns for sample input"
+    }
+  ],
+
+  "phase_dependencies": {
+    "dag": {
+      "1": [],
+      "2": [1],
+      "3": [2],
+      "4": [3],
+      "5": [4],
+      "6": [4]
+    },
+    "critical_path": [1, 2, 3, 4, 5],
+    "parallel_eligible": [[5, 6]],
+    "gate_checks": {
+      "1->2": "Model forward pass produces correct shapes, tokenizer round-trips text",
+      "2->3": "Training runs 1 epoch, checkpoint save/load works",
+      "3->4": "API health endpoint responds, WebSocket accepts connection",
+      "4->5": "Frontend renders, WebSocket receives messages",
+      "4->6": "Frontend renders, WebSocket receives messages"
+    }
+  },
+
+  "features": [
+    {
+      "id": "FEAT-001",
+      "name": "Multi-Head Attention Module",
+      "phase": 1,
+      "description": "Implement scaled dot-product attention with multiple heads, following Chapter 3-4 of Raschka",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Attention weights sum to 1 across key dimension",
+          "Output shape matches input shape",
+          "Causal masking prevents attending to future tokens"
+        ],
+        "learning": [
+          "Code comments explain QKV projection purpose",
+          "Code comments explain scaling factor"
+        ]
+      },
+      "verification_commands": ["python -c \"from experiments.pretraining.model import MultiHeadAttention; import torch; mha = MultiHeadAttention(768, 12); x = torch.randn(2, 128, 768); print(mha(x).shape)\""]
+    },
+    {
+      "id": "FEAT-002",
+      "name": "Feed-Forward Network",
+      "phase": 1,
+      "description": "Implement position-wise FFN with GELU activation, following Chapter 4",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Output shape matches input shape",
+          "Uses GELU activation (not ReLU)",
+          "Expansion factor configurable (default 4x)"
+        ],
+        "learning": [
+          "Code comments explain why FFN follows attention",
+          "Code comments explain GELU vs ReLU choice"
+        ]
+      },
+      "verification_commands": ["python -c \"from experiments.pretraining.model import FeedForward; import torch; ff = FeedForward(768); x = torch.randn(2, 128, 768); print(ff(x).shape)\""]
+    },
+    {
+      "id": "FEAT-003",
+      "name": "Transformer Block",
+      "phase": 1,
+      "description": "Combine attention + FFN with layer norm and residual connections",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Pre-norm architecture (LayerNorm before attention/FFN)",
+          "Residual connections add input to output",
+          "Output shape matches input shape"
+        ],
+        "learning": [
+          "Code comments explain pre-norm vs post-norm",
+          "Code comments explain residual connection purpose"
+        ]
+      },
+      "verification_commands": ["python -c \"from experiments.pretraining.model import TransformerBlock; import torch; tb = TransformerBlock(768, 12); x = torch.randn(2, 128, 768); print(tb(x).shape)\""]
+    },
+    {
+      "id": "FEAT-004",
+      "name": "GPT Model",
+      "phase": 1,
+      "description": "Full GPT model with embeddings, transformer blocks, and output projection",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Token + positional embeddings combined",
+          "Configurable number of layers",
+          "Output logits shape: (batch, seq_len, vocab_size)"
+        ],
+        "learning": [
+          "Model configs for nano/small/medium defined",
+          "Parameter count calculation included"
+        ]
+      },
+      "verification_commands": ["python -c \"from experiments.pretraining.model import GPTModel, GPT_CONFIGS; m = GPTModel(GPT_CONFIGS['nano']); import torch; x = torch.randint(0, 1000, (2, 64)); print(m(x).shape)\""]
+    },
+    {
+      "id": "FEAT-005",
+      "name": "BPE Tokenizer",
+      "phase": 1,
+      "description": "Byte-pair encoding tokenizer using tiktoken or custom implementation",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Encode text to token IDs",
+          "Decode token IDs to text",
+          "Handle unknown characters gracefully"
+        ],
+        "learning": [
+          "Documentation explains BPE algorithm",
+          "Vocab size configurable"
+        ]
+      },
+      "verification_commands": ["python -c \"from experiments.pretraining.tokenizer import Tokenizer; t = Tokenizer(); ids = t.encode('Hello world'); print(ids, t.decode(ids))\""]
+    },
+    {
+      "id": "FEAT-006",
+      "name": "Data Pipeline",
+      "phase": 1,
+      "description": "Dataset class and DataLoader for pretraining with sliding window",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Load text corpus from file",
+          "Sliding window creates input/target pairs",
+          "DataLoader produces batches of correct shape"
+        ],
+        "learning": [
+          "Documentation explains next-token prediction setup",
+          "Configurable context length and stride"
+        ]
+      },
+      "verification_commands": ["python -c \"from experiments.pretraining.data import get_dataloader; dl = get_dataloader('verdict', batch_size=4, context_length=64); batch = next(iter(dl)); print(batch['input_ids'].shape, batch['labels'].shape)\""]
+    },
+    {
+      "id": "FEAT-007",
+      "name": "Training Loop",
+      "phase": 2,
+      "description": "Core training loop with forward pass, loss computation, backprop, and optimization",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Cross-entropy loss computed correctly",
+          "Gradients computed and applied",
+          "Loss decreases over iterations on small data"
+        ],
+        "learning": [
+          "Code comments explain loss function choice",
+          "Training step broken into clear sub-steps"
+        ]
+      },
+      "verification_commands": ["python -m experiments.pretraining.train --config nano --epochs 1 --corpus verdict --no-save"]
+    },
+    {
+      "id": "FEAT-008",
+      "name": "Learning Rate Scheduling",
+      "phase": 2,
+      "description": "Warmup + cosine decay learning rate schedule",
+      "priority": 2,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Linear warmup for first N steps",
+          "Cosine decay after warmup",
+          "LR logged at each step"
+        ],
+        "learning": [
+          "Documentation explains why warmup helps",
+          "Visualization of LR schedule available"
+        ]
+      },
+      "verification_commands": ["python -c \"from experiments.pretraining.train import get_lr_scheduler; print('LR scheduler configured')\""]
+    },
+    {
+      "id": "FEAT-009",
+      "name": "Checkpointing",
+      "phase": 2,
+      "description": "Save and load model checkpoints with configurable frequency",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Save model weights to disk",
+          "Save optimizer state (optional)",
+          "Load checkpoint and resume training",
+          "Checkpoint storage off by default"
+        ],
+        "learning": [
+          "Documentation explains what's saved and why"
+        ]
+      },
+      "verification_commands": ["python -c \"from experiments.pretraining.checkpoint import save_checkpoint, load_checkpoint; print('Checkpoint functions available')\""]
+    },
+    {
+      "id": "FEAT-010",
+      "name": "Configuration System",
+      "phase": 2,
+      "description": "Model configs via presets, YAML files, and CLI overrides",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Named presets: nano, small, medium",
+          "YAML config file loading",
+          "CLI args override config values"
+        ],
+        "learning": [
+          "Each preset documented with parameter counts",
+          "Config hierarchy explained"
+        ]
+      },
+      "verification_commands": ["python -m experiments.pretraining.train --help"]
+    },
+    {
+      "id": "FEAT-011",
+      "name": "Text Generation",
+      "phase": 2,
+      "description": "Generate text from trained model with temperature and top-k sampling",
+      "priority": 2,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Greedy decoding (temperature=0)",
+          "Temperature scaling",
+          "Top-k filtering",
+          "Generate from arbitrary prompt"
+        ],
+        "learning": [
+          "Documentation explains temperature effect",
+          "Documentation explains top-k purpose"
+        ]
+      },
+      "verification_commands": ["python -m experiments.pretraining.generate --checkpoint outputs/pretraining/nano/checkpoint.pt --prompt 'The meaning of'"]
+    },
+    {
+      "id": "FEAT-012",
+      "name": "FastAPI Server",
+      "phase": 3,
+      "description": "Backend API server with health check and configuration endpoints",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Server starts on configurable port",
+          "Health endpoint returns status",
+          "CORS configured for frontend"
+        ]
+      },
+      "verification_commands": ["curl -s http://localhost:8000/api/health"]
+    },
+    {
+      "id": "FEAT-013",
+      "name": "WebSocket Training Stream",
+      "phase": 3,
+      "description": "WebSocket endpoint that streams training metrics in real-time",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "WebSocket accepts connections",
+          "Streams loss, perplexity, LR at each step",
+          "Streams sample generations at intervals",
+          "Handles client disconnection gracefully"
+        ]
+      },
+      "verification_commands": ["python -c \"import asyncio; import websockets; asyncio.run(websockets.connect('ws://localhost:8000/ws/training'))\""]
+    },
+    {
+      "id": "FEAT-014",
+      "name": "Training Control Endpoints",
+      "phase": 3,
+      "description": "REST endpoints to start, pause, stop, and configure training runs",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "POST /api/train/start - starts training",
+          "POST /api/train/pause - pauses training",
+          "POST /api/train/stop - stops training",
+          "GET /api/train/status - returns current state"
+        ]
+      },
+      "verification_commands": ["curl -s http://localhost:8000/api/train/status"]
+    },
+    {
+      "id": "FEAT-015",
+      "name": "Analysis Endpoints",
+      "phase": 3,
+      "description": "REST endpoints for checkpoint listing, model info, and generation",
+      "priority": 2,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "GET /api/checkpoints - list available checkpoints",
+          "GET /api/checkpoints/{id} - get checkpoint details",
+          "POST /api/generate - generate text from checkpoint",
+          "POST /api/analyze/attention - get attention patterns"
+        ]
+      },
+      "verification_commands": ["curl -s http://localhost:8000/api/checkpoints"]
+    },
+    {
+      "id": "FEAT-016",
+      "name": "React App Scaffold",
+      "phase": 4,
+      "description": "Create React + TypeScript app with build tooling",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Vite or Create React App setup",
+          "TypeScript configured",
+          "Development server runs",
+          "Production build works"
+        ]
+      },
+      "verification_commands": ["cd experiments/pretraining/frontend && npm run build"]
+    },
+    {
+      "id": "FEAT-017",
+      "name": "WebSocket Client Hook",
+      "phase": 4,
+      "description": "React hook for WebSocket connection with reconnection logic",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Connects to backend WebSocket",
+          "Reconnects on disconnect",
+          "Exposes connection status",
+          "Parses incoming JSON messages"
+        ]
+      },
+      "verification_commands": ["Manual: verify WebSocket status indicator in UI"]
+    },
+    {
+      "id": "FEAT-018",
+      "name": "Application Layout",
+      "phase": 4,
+      "description": "Main layout with header, sidebar navigation, content area",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Header with app title",
+          "Navigation between Training and Analysis views",
+          "Responsive layout"
+        ]
+      },
+      "verification_commands": ["curl -s http://localhost:3000 | grep -q 'Pretraining Lab'"]
+    },
+    {
+      "id": "FEAT-019",
+      "name": "State Management",
+      "phase": 4,
+      "description": "Global state for training status, config, and metrics history",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Training state (idle/running/paused)",
+          "Current config accessible globally",
+          "Metrics history for charting"
+        ]
+      },
+      "verification_commands": ["Manual: verify state updates when training starts/stops"]
+    },
+    {
+      "id": "FEAT-020",
+      "name": "Loss Curve Chart",
+      "phase": 5,
+      "description": "Real-time line chart showing train and validation loss",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Updates in real-time via WebSocket",
+          "Shows train loss and val loss",
+          "X-axis: steps, Y-axis: loss",
+          "Zoom and pan controls"
+        ]
+      },
+      "verification_commands": ["Manual: start training, observe loss curve updating"]
+    },
+    {
+      "id": "FEAT-021",
+      "name": "Metrics Panel",
+      "phase": 5,
+      "description": "Display current metrics: loss, perplexity, LR, GPU memory, tokens/sec",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "All metrics update in real-time",
+          "Clear labels and formatting",
+          "GPU memory shows used/total"
+        ]
+      },
+      "verification_commands": ["Manual: verify metrics display during training"]
+    },
+    {
+      "id": "FEAT-022",
+      "name": "Training Controls",
+      "phase": 5,
+      "description": "Start, pause, stop buttons with configuration form",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Model preset dropdown",
+          "Corpus selection",
+          "Hyperparameter inputs (LR, epochs, batch size)",
+          "Start/pause/stop buttons with correct states"
+        ]
+      },
+      "verification_commands": ["Manual: start and stop training via UI"]
+    },
+    {
+      "id": "FEAT-023",
+      "name": "Sample Generations Display",
+      "phase": 5,
+      "description": "Show model generations at intervals during training",
+      "priority": 2,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Configurable prompt for generation",
+          "Shows generation at each checkpoint interval",
+          "Displays step number with each generation"
+        ]
+      },
+      "verification_commands": ["Manual: observe generations appearing during training"]
+    },
+    {
+      "id": "FEAT-024",
+      "name": "Progress Indicator",
+      "phase": 5,
+      "description": "Training progress bar and time estimates",
+      "priority": 2,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Progress bar shows epoch completion",
+          "Elapsed time displayed",
+          "Estimated remaining time"
+        ]
+      },
+      "verification_commands": ["Manual: verify progress updates during training"]
+    },
+    {
+      "id": "FEAT-025",
+      "name": "Checkpoint Browser",
+      "phase": 6,
+      "description": "List and select checkpoints for analysis",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Lists available checkpoints",
+          "Shows checkpoint metadata (step, loss, timestamp)",
+          "Click to load for analysis"
+        ]
+      },
+      "verification_commands": ["Manual: browse checkpoints in analysis view"]
+    },
+    {
+      "id": "FEAT-026",
+      "name": "Attention Visualization",
+      "phase": 6,
+      "description": "Interactive attention heatmap for analyzing attention patterns",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Input text field for analysis",
+          "Layer selector dropdown",
+          "Head selector (individual or averaged)",
+          "Heatmap shows token-to-token attention"
+        ]
+      },
+      "verification_commands": ["Manual: enter text, view attention heatmap"]
+    },
+    {
+      "id": "FEAT-027",
+      "name": "Activation Visualization",
+      "phase": 6,
+      "description": "Display activation norms across layers for selected tokens",
+      "priority": 2,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Token selector from input",
+          "Bar chart of activation norms per layer",
+          "Compare pre-attention vs post-FFN"
+        ]
+      },
+      "verification_commands": ["Manual: select token, view activation chart"]
+    },
+    {
+      "id": "FEAT-028",
+      "name": "Interactive Generation",
+      "phase": 6,
+      "description": "Generate text from loaded checkpoint with configurable parameters",
+      "priority": 1,
+      "passes": false,
+      "criteria": {
+        "functional": [
+          "Prompt input field",
+          "Temperature slider",
+          "Top-k input",
+          "Max tokens input",
+          "Generate button with streaming output"
+        ]
+      },
+      "verification_commands": ["Manual: generate text from analysis view"]
+    }
+  ],
+
+  "architectural_decisions": {
+    "resolved": [
+      {
+        "id": "ADR-001",
+        "decision": "Frontend framework",
+        "choice": "React + TypeScript",
+        "rationale": "Strong ecosystem, type safety, user familiarity",
+        "source": "interview"
+      },
+      {
+        "id": "ADR-002",
+        "decision": "Real-time communication",
+        "choice": "WebSocket",
+        "rationale": "Low latency for streaming training metrics",
+        "source": "interview"
+      },
+      {
+        "id": "ADR-003",
+        "decision": "Configuration approach",
+        "choice": "Presets + YAML files + CLI overrides",
+        "rationale": "Flexibility for different use cases",
+        "source": "interview"
+      },
+      {
+        "id": "ADR-004",
+        "decision": "Checkpoint storage",
+        "choice": "Off by default, opt-in",
+        "rationale": "Disk space concerns, may be large with attention data",
+        "source": "interview"
+      },
+      {
+        "id": "ADR-005",
+        "decision": "Visualization implementation",
+        "choice": "Fresh JS visualizations (not reusing Python tooling)",
+        "rationale": "Better interactivity, direct browser rendering",
+        "source": "interview"
+      },
+      {
+        "id": "ADR-006",
+        "decision": "Track integration",
+        "choice": "Standalone but can share utilities if non-impeding",
+        "rationale": "Clean separation while allowing code reuse",
+        "source": "interview"
+      }
+    ],
+    "pending_adrs": []
+  },
+
+  "tracking": {
+    "progress_file": "experiments/pretraining/progress.txt",
+    "retrospective_template": "experiments/pretraining/RETROSPECTIVE.md"
+  },
+
+  "escalation_triggers": [
+    "Frontend build fails (npm/webpack errors)",
+    "Model produces NaN losses during training",
+    "WebSocket connection cannot be established after 3 retries",
+    "Any phase takes >20 iterations without measurable progress"
+  ],
+
+  "loop_parameters": {
+    "max_iterations": 50,
+    "progress_tracking": ["git_commits", "progress_file"],
+    "on_phase_complete": "ask"
+  }
+}
