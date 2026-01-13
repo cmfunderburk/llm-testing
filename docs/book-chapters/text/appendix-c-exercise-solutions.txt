@@ -1,0 +1,648 @@
+                                            appendix C
+                                      Exercise solutions
+The complete code examples for the exercises’ answers can be found in the supple-
+mentary GitHub repository at https://github.com/rasbt/LLMs-from-scratch.
+
+Chapter 2
+Exercise 2.1
+You can obtain the individual token IDs by prompting the encoder with one string
+at a time:
+
+print(tokenizer.encode("Ak"))
+print(tokenizer.encode("w"))
+# ...
+
+This prints
+
+[33901]
+[86]
+# ...
+
+You can then use the following code to assemble the original string:
+
+print(tokenizer.decode([33901, 86, 343, 86, 220, 959]))
+
+This returns
+
+'Akwirw ier'
+
+
+
+
+                                     300
+
+
+
+          Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                     Chapter 3                                    301
+
+
+Exercise 2.2
+The code for the data loader with max_length=2 and stride=2:
+
+dataloader = create_dataloader(
+    raw_text, batch_size=4, max_length=2, stride=2
+)
+
+It produces batches of the following format:
+
+tensor([[ 40, 367],
+        [2885, 1464],
+        [1807, 3619],
+        [ 402, 271]])
+
+The code of the second data loader with max_length=8 and stride=2:
+
+dataloader = create_dataloader(
+    raw_text, batch_size=4, max_length=8, stride=2
+)
+
+An example batch looks like
+
+tensor([[   40,     367, 2885,     1464, 1807,       3619,   402,        271],
+        [ 2885,    1464, 1807,     3619,   402,       271, 10899,       2138],
+        [ 1807,    3619,   402,     271, 10899,      2138,   257,       7026],
+        [ 402,      271, 10899,    2138,   257,      7026, 15632,        438]])
+
+
+Chapter 3
+Exercise 3.1
+The correct weight assignment is
+
+sa_v1.W_query = torch.nn.Parameter(sa_v2.W_query.weight.T)
+sa_v1.W_key = torch.nn.Parameter(sa_v2.W_key.weight.T)
+sa_v1.W_value = torch.nn.Parameter(sa_v2.W_value.weight.T)
+
+Exercise 3.2
+To achieve an output dimension of 2, similar to what we had in single-head attention,
+we need to change the projection dimension d_out to 1.
+d_out = 1
+mha = MultiHeadAttentionWrapper(d_in, d_out, block_size, 0.0, num_heads=2)
+
+Exercise 3.3
+The initialization for the smallest GPT-2 model is
+block_size = 1024
+d_in, d_out = 768, 768
+num_heads = 12
+mha = MultiHeadAttention(d_in, d_out, block_size, 0.0, num_heads)
+
+
+
+
+          Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+302                             APPENDIX C   Exercise solutions
+
+
+      Chapter 4
+      Exercise 4.1
+      We can calculate the number of parameters in the feed forward and attention mod-
+      ules as follows:
+
+      block = TransformerBlock(GPT_CONFIG_124M)
+
+      total_params = sum(p.numel() for p in block.ff.parameters())
+      print(f"Total number of parameters in feed forward module: {total_params:,}")
+
+      total_params = sum(p.numel() for p in block.att.parameters())
+      print(f"Total number of parameters in attention module: {total_params:,}")
+
+      As we can see, the feed forward module contains approximately twice as many param-
+      eters as the attention module:
+
+      Total number of parameters in feed forward module: 4,722,432
+      Total number of parameters in attention module: 2,360,064
+
+      Exercise 4.2
+      To instantiate the other GPT model sizes, we can modify the configuration dictionary
+      as follows (here shown for GPT-2 XL):
+
+      GPT_CONFIG = GPT_CONFIG_124M.copy()
+      GPT_CONFIG["emb_dim"] = 1600
+      GPT_CONFIG["n_layers"] = 48
+      GPT_CONFIG["n_heads"] = 25
+      model = GPTModel(GPT_CONFIG)
+
+      Then, reusing the code from section 4.6 to calculate the number of parameters and
+      RAM requirements, we find
+
+      gpt2-xl:
+      Total number of parameters: 1,637,792,000
+      Number of trainable parameters considering weight tying: 1,557,380,800
+      Total size of the model: 6247.68 MB
+
+      Exercise 4.3
+      There are three distinct places in chapter 4 where we used dropout layers: the embed-
+      ding layer, shortcut layer, and multi-head attention module. We can control the drop-
+      out rates for each of the layers by coding them separately in the config file and then
+      modifying the code implementation accordingly.
+         The modified configuration is as follows:
+
+      GPT_CONFIG_124M = {
+          "vocab_size": 50257,
+
+
+
+
+                  Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                     Chapter 4                             303
+
+    "context_length": 1024,
+    "emb_dim": 768,
+    "n_heads": 12,
+    "n_layers": 12,                     Dropout for multi-
+    "drop_rate_attn": 0.1,              head attention
+    "drop_rate_shortcut": 0.1,
+                                                   Dropout for shortcut
+    "drop_rate_emb": 0.1,                          connections
+    "qkv_bias": False
+}                                          Dropout for
+                                           embedding layer
+
+The modified TransformerBlock and GPTModel look like
+
+class TransformerBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.att = MultiHeadAttention(
+            d_in=cfg["emb_dim"],
+            d_out=cfg["emb_dim"],
+            context_length=cfg["context_length"],
+            num_heads=cfg["n_heads"],
+            dropout=cfg["drop_rate_attn"],            Dropout for multi-
+            qkv_bias=cfg["qkv_bias"])
+                                                      head attention
+        self.ff = FeedForward(cfg)
+        self.norm1 = LayerNorm(cfg["emb_dim"])
+        self.norm2 = LayerNorm(cfg["emb_dim"])
+        self.drop_shortcut = nn.Dropout(
+            cfg["drop_rate_shortcut"]             Dropout for shortcut
+        )                                         connections
+
+    def forward(self, x):
+        shortcut = x
+        x = self.norm1(x)
+        x = self.att(x)
+        x = self.drop_shortcut(x)
+        x = x + shortcut
+
+        shortcut = x
+        x = self.norm2(x)
+        x = self.ff(x)
+        x = self.drop_shortcut(x)
+        x = x + shortcut
+        return x
+
+
+class GPTModel(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.tok_emb = nn.Embedding(
+            cfg["vocab_size"], cfg["emb_dim"]
+        )
+
+
+
+
+          Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+304                              APPENDIX C   Exercise solutions
+
+               self.pos_emb = nn.Embedding(
+                   cfg["context_length"], cfg["emb_dim"]                          Dropout for
+               )                                                                  embedding
+               self.drop_emb = nn.Dropout(cfg["drop_rate_emb"])                   layer
+
+               self.trf_blocks = nn.Sequential(
+                   *[TransformerBlock(cfg) for _ in range(cfg["n_layers"])])
+
+               self.final_norm = LayerNorm(cfg["emb_dim"])
+               self.out_head = nn.Linear(
+                   cfg["emb_dim"], cfg["vocab_size"], bias=False
+               )
+
+          def forward(self, in_idx):
+              batch_size, seq_len = in_idx.shape
+              tok_embeds = self.tok_emb(in_idx)
+              pos_embeds = self.pos_emb(
+                  torch.arange(seq_len, device=in_idx.device)
+              )
+              x = tok_embeds + pos_embeds
+              x = self.drop_emb(x)
+              x = self.trf_blocks(x)
+              x = self.final_norm(x)
+              logits = self.out_head(x)
+              return logitss
+
+
+      Chapter 5
+      Exercise 5.1
+      We can print the number of times the token (or word) “pizza” is sampled using the
+      print_sampled_tokens function we defined in this section. Let’s start with the code
+      we defined in section 5.3.1.
+         The “pizza” token is sampled 0x if the temperature is 0 or 0.1, and it is sampled 32× if
+      the temperature is scaled up to 5. The estimated probability is 32/1000 × 100% = 3.2%.
+         The actual probability is 4.3% and is contained in the rescaled softmax probability
+      tensor (scaled_probas[2][6]).
+
+      Exercise 5.2
+      Top-k sampling and temperature scaling are settings that have to be adjusted based on
+      the LLM and the desired degree of diversity and randomness in the output.
+           When using relatively small top-k values (e.g., smaller than 10) and when the tem-
+      perature is set below 1, the model’s output becomes less random and more determin-
+      istic. This setting is useful when we need the generated text to be more predictable,
+      coherent, and closer to the most likely outcomes based on the training data.
+           Applications for such low k and temperature settings include generating formal
+      documents or reports where clarity and accuracy are most important. Other examples
+      of applications include technical analysis or code-generation tasks, where precision is
+
+
+
+
+                   Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                      Chapter 5                                          305
+
+
+crucial. Also, question answering and educational content require accurate answers
+where a temperature below 1 is helpful.
+   On the other hand, larger top-k values (e.g., values in the range of 20 to 40) and
+temperature values above 1 are useful when using LLMs for brainstorming or generat-
+ing creative content, such as fiction.
+
+Exercise 5.3
+There are multiple ways to force deterministic behavior with the generate function:
+   1   Setting to top_k=None and applying no temperature scaling
+   2   Setting top_k=1
+
+Exercise 5.4
+In essence, we have to load the model and optimizer that we saved in the main chapter:
+
+checkpoint = torch.load("model_and_optimizer.pth")
+model = GPTModel(GPT_CONFIG_124M)
+model.load_state_dict(checkpoint["model_state_dict"])
+optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4, weight_decay=0.1)
+optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+Then, call the train_simple_function with num_epochs=1 to train the model for
+another epoch.
+
+Exercise 5.5
+We can use the following code to calculate the training and validation set losses of the
+GPT model:
+
+train_loss = calc_loss_loader(train_loader, gpt, device)
+val_loss = calc_loss_loader(val_loader, gpt, device)
+
+The resulting losses for the 124-million parameter are as follows:
+
+Training loss: 3.754748503367106
+Validation loss: 3.559617757797241
+
+The main observation is that the training and validation set performances are in the
+same ballpark. This can have multiple explanations:
+   1   “The Verdict” was not part of the pretraining dataset when OpenAI trained
+       GPT-2. Hence, the model is not explicitly overfitting to the training set and per-
+       forms similarly well on the training and validation set portions of “The Verdict.”
+       (The validation set loss is slightly lower than the training set loss, which is
+       unusual in deep learning. However, it’s likely due to random noise since the
+       dataset is relatively small. In practice, if there is no overfitting, the training and
+       validation set performances are expected to be roughly identical).
+
+
+
+
+           Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+306                              APPENDIX C   Exercise solutions
+
+
+         2   “The Verdict” was part of GPT-2’s training dataset. In this case, we can’t tell
+             whether the model is overfitting the training data because the validation set
+             would have been used for training as well. To evaluate the degree of overfitting,
+             we’d need a new dataset generated after OpenAI finished training GPT-2 to
+             make sure that it couldn’t have been part of the pretraining.
+
+      Exercise 5.6
+      In the main chapter, we experimented with the smallest GPT-2 model, which has only
+      124-million parameters. The reason was to keep the resource requirements as low as
+      possible. However, you can easily experiment with larger models with minimal code
+      changes. For example, instead of loading the 1,558 million instead of 124 million
+      model weights in chapter 5, the only two lines of code that we have to change are the
+      following:
+
+      hparams, params = download_and_load_gpt2(model_size="124M", models_dir="gpt2")
+      model_name = "gpt2-small (124M)"
+
+      The updated code is
+
+      hparams, params = download_and_load_gpt2(model_size="1558M", models_dir="gpt2")
+      model_name = "gpt2-xl (1558M)"
+
+
+      Chapter 6
+      Exercise 6.1
+      We can pad the inputs to the maximum number of tokens the model supports by set-
+      ting the max length to max_length = 1024 when initializing the datasets:
+
+      train_dataset = SpamDataset(..., max_length=1024, ...)
+      val_dataset = SpamDataset(..., max_length=1024, ...)
+      test_dataset = SpamDataset(..., max_length=1024, ...)
+
+      However, the additional padding results in a substantially worse test accuracy of
+      78.33% (vs. the 95.67% in the main chapter).
+
+      Exercise 6.2
+      Instead of fine-tuning just the final transformer block, we can fine-tune the entire
+      model by removing the following lines from the code:
+
+      for param in model.parameters():
+          param.requires_grad = False
+
+      This modification results in a 1% improved test accuracy of 96.67% (vs. the 95.67% in
+      the main chapter).
+
+
+
+
+                   Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                      Chapter 7                                      307
+
+
+Exercise 6.3
+Rather than fine-tuning the last output token, we can fine-tune the first output token
+by changing model(input_batch)[:, -1, :] to model(input_batch)[:, 0, :] every-
+where in the code.
+   As expected, since the first token contains less information than the last token, this
+change results in a substantially worse test accuracy of 75.00% (vs. the 95.67% in the
+main chapter).
+
+Chapter 7
+Exercise 7.1
+The Phi-3 prompt format, which is shown in figure 7.4, looks like the following for a
+given example input:
+<user>
+Identify the correct spelling of the following word: 'Occasion'
+
+<assistant>
+The correct spelling is 'Occasion'.
+
+To use this template, we can modify the format_input function as follows:
+def format_input(entry):
+    instruction_text = (
+        f"<|user|>\n{entry['instruction']}"
+    )
+    input_text = f"\n{entry['input']}" if entry["input"] else ""
+    return instruction_text + input_text
+
+Lastly, we also have to update the way we extract the generated response when we col-
+lect the test set responses:
+for i, entry in tqdm(enumerate(test_data), total=len(test_data)):
+    input_text = format_input(entry)
+    tokenizer=tokenizer
+    token_ids = generate(
+        model=model,
+        idx=text_to_token_ids(input_text, tokenizer).to(device),
+        max_new_tokens=256,
+        context_size=BASE_CONFIG["context_length"],
+        eos_id=50256
+    )
+    generated_text = token_ids_to_text(token_ids, tokenizer)
+    response_text = (
+        generated_text[len(input_text):]                     New: Adjust
+        .replace("<|assistant|>:", "")                       ###Response to
+        .strip()                                             <|assistant|>
+    )
+    test_data[i]["model_response"] = response_text
+
+
+
+
+           Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+308                              APPENDIX C   Exercise solutions
+
+
+      Fine-tuning the model with the Phi-3 template is approximately 17% faster since it
+      results in shorter model inputs. The score is close to 50, which is in the same ballpark
+      as the score we previously achieved with the Alpaca-style prompts.
+
+      Exercise 7.2
+      To mask out the instructions as shown in figure 7.13, we need to make slight modifica-
+      tions to the InstructionDataset class and custom_collate_fn function. We can
+      modify the InstructionDataset class to collect the lengths of the instructions, which
+      we will use in the collate function to locate the instruction content positions in the tar-
+      gets when we code the collate function, as follows:
+
+      class InstructionDataset(Dataset):
+          def __init__(self, data, tokenizer):                     Separate list
+              self.data = data                                     for instruction
+              self.instruction_lengths = []                        lengths
+              self.encoded_texts = []
+
+               for entry in data:
+                   instruction_plus_input = format_input(entry)
+                   response_text = f"\n\n### Response:\n{entry['output']}"
+                   full_text = instruction_plus_input + response_text
+
+                     self.encoded_texts.append(
+                         tokenizer.encode(full_text)
+                     )
+                                                                                               Collects
+                     instruction_length = (                                                 instruction
+                         len(tokenizer.encode(instruction_plus_input)                           lengths
+                     )
+                     self.instruction_lengths.append(instruction_length)
+
+          def __getitem__(self, index):
+              return self.instruction_lengths[index], self.encoded_texts[index]
+
+          def __len__(self):                                                      Returns both instruction
+              return len(self.data)                                            lengths and texts separately
+
+      Next, we update the custom_collate_fn where each batch is now a tuple contain-
+      ing (instruction_length, item) instead of just item due to the changes in the
+      InstructionDataset dataset. In addition, we now mask the corresponding instruc-
+      tion tokens in the target ID list:
+
+      def custom_collate_fn(
+          batch,
+          pad_token_id=50256,
+          ignore_index=-100,
+          allowed_max_length=None,
+          device="cpu"
+      ):
+
+
+
+
+                   Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                      Chapter 7                                        309
+
+     batch_max_length = max(len(item)+1 for instruction_length, item in batch)
+     inputs_lst, targets_lst = [], []
+                                                           batch is now
+     for instruction_length, item in batch:         a tuple.
+         new_item = item.copy()
+         new_item += [pad_token_id]
+         padded = (
+             new_item + [pad_token_id] * (batch_max_length - len(new_item)
+         )
+         inputs = torch.tensor(padded[:-1])
+         targets = torch.tensor(padded[1:])
+         mask = targets == pad_token_id
+         indices = torch.nonzero(mask).squeeze()
+         if indices.numel() > 1:
+                                                             Masks all input and
+             targets[indices[1:]] = ignore_index
+                                                                  instruction tokens
+         targets[:instruction_length-1] = -100                    in the targets
+
+         if allowed_max_length is not None:
+             inputs = inputs[:allowed_max_length]
+             targets = targets[:allowed_max_length]
+
+         inputs_lst.append(inputs)
+         targets_lst.append(targets)
+
+     inputs_tensor = torch.stack(inputs_lst).to(device)
+     targets_tensor = torch.stack(targets_lst).to(device)
+
+     return inputs_tensor, targets_tensor
+
+When evaluating a model fine-tuned with this instruction masking method, it per-
+forms slightly worse (approximately 4 points using the Ollama Llama 3 method from
+chapter 7). This is consistent with observations in the “Instruction Tuning With Loss
+Over Instructions” paper (https://arxiv.org/abs/2405.14394).
+
+Exercise 7.3
+To fine-tune the model on the original Stanford Alpaca dataset (https://github.com/
+tatsu-lab/stanford_alpaca), we just have to change the file URL from
+url = "https://raw.githubusercontent.com/rasbt/LLMs-from-scratch/main/ch07/
+01_main-chapter-code/instruction-data.json"
+
+to
+url = "https://raw.githubusercontent.com/tatsu-lab/stanford_alpaca/main/
+alpaca_data.json"
+
+Note that the dataset contains 52,000 entries (50x more than in chapter 7), and the
+entries are longer than the ones we worked with in chapter 7.
+   Thus, it’s highly recommended that the training be run on a GPU.
+
+
+
+
+           Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+310                              APPENDIX C   Exercise solutions
+
+
+          If you encounter out-of-memory errors, consider reducing the batch size from 8 to
+      4, 2, or 1. In addition to lowering the batch size, you may also want to consider lower-
+      ing the allowed_max_length from 1024 to 512 or 256.
+          Below are a few examples from the Alpaca dataset, including the generated model
+      responses:
+
+      Exercise 7.4
+      To instruction fine-tune the model using LoRA, use the relevant classes and functions
+      from appendix E:
+
+      from appendix_E import LoRALayer, LinearWithLoRA, replace_linear_with_lora
+
+
+      Next, add the following lines of code below the model loading code in section 7.5:
+
+      total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+      print(f"Total trainable parameters before: {total_params:,}")
+
+      for param in model.parameters():
+          param.requires_grad = False
+
+      total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+      print(f"Total trainable parameters after: {total_params:,}")
+      replace_linear_with_lora(model, rank=16, alpha=16)
+
+      total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+      print(f"Total trainable LoRA parameters: {total_params:,}")
+      model.to(device)
+
+
+      Note that, on an Nvidia L4 GPU, the fine-tuning with LoRA takes 1.30 min to run on
+      an L4. On the same GPU, the original code takes 1.80 minutes to run. So, LoRA is
+      approximately 28% faster in this case. The score, evaluated with the Ollama Llama 3
+      method from chapter 7, is around 50, which is in the same ballpark as the original
+      model.
+
+      Appendix A
+      Exercise A.1
+      The optional Python Setup Tips document (https://github.com/rasbt/LLMs-from
+      -scratch/tree/main/setup/01_optional-python-setup-preferences) contains addi-
+      tional recommendations and tips if you need additional help to set up your Python
+      environment.
+
+
+
+
+                   Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                       Appendix A                                   311
+
+
+Exercise A.2
+The the optional “Installing Libraries Used In This Book” document (https://
+github.com/rasbt/LLMs-from-scratch/tree/main/setup/02_installing-python-librar-
+ies) contains utilities to check whether your environment is set up correctly.
+
+Exercise A.3
+The network has two inputs and two outputs. In addition, there are 2 hidden layers
+with 30 and 20 nodes, respectively. Programmatically, we can calculate the number of
+parameters as follows:
+
+model = NeuralNetwork(2, 2)
+num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print("Total number of trainable model parameters:", num_params)
+
+
+This returns
+
+752
+
+
+We can also calculate this manually as follows:
+       First hidden layer: 2 inputs times 30 hidden units plus 30 bias units
+       Second hidden layer: 30 incoming units times 20 nodes plus 20 bias units
+       Output layer: 20 incoming nodes times 2 output nodes plus 2 bias units
+
+Then, adding all the parameters in each layer results in 2×30+30 + 30×20+20 +
+20×2+2 = 752.
+
+Exercise A.4
+The exact run-time results will be specific to the hardware used for this experiment. In
+my experiments, I observed significant speed-ups even for small matrix multiplications
+when using a Google Colab instance connected to a V100 GPU:
+
+a = torch.rand(100, 200)
+b = torch.rand(200, 300)
+%timeit a@b
+
+On the CPU this resulted in
+
+63.8 μs ± 8.7 μs per loop
+
+
+When executed on a GPU
+
+a, b = a.to("cuda"), b.to("cuda")
+%timeit a @ b
+
+
+
+
+             Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+312                             APPENDIX C   Exercise solutions
+
+
+      The result was
+
+      13.8 μs ± 425 ns per loop
+
+      In this case, on a V100, the computation was approximately four times faster.
+
+
+
+
+                  Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+

@@ -1,0 +1,602 @@
+                                                                                       index
+Symbols                                                 problem with modeling long sequences 52
+                                                        self-attention mechanism 55–64
+[BOS] (beginning of sequence) token 32               attention scores 57
+[EOS] (end of sequence) token 32                     attention weights, computing step by step
+[PAD] (padding) token 32                                   65–70
+@ operator 261                                       attn_scores 71
+%timeit command 282                                  autograd engine 264
+<|endoftext|> token 34                               automatic differentiation 263–265
+<|unk|> tokens 29–31, 34                                engine 252
+== comparison operator 277                              partial derivatives and gradients 263
+                                                     autoregressive model 13
+Numerics                                             Axolotl 249
+
+04_preference-tuning-with-dpo folder 247             B
+124M parameter 161
+355M parameter 227                                   backpropagation 137
+                                                     .backward() method 112, 318
+A                                                    Bahdanau attention mechanism 54
+                                                     base model 7
+AdamW optimizer 148, 294                             batch normalization layers 276
+AI (artificial intelligence) 252                     batch_size 233
+allowed_max_length 224, 233, 309                     BERT (bidirectional encoder representations from
+Alpaca dataset 233, 296                                  transformers) 8
+alpha scaling factor 328                             BPE (byte pair encoding) 32–35
+architectures, transformer 7–10
+argmax function 134, 152–155, 190, 277               C
+arXiv 248
+assign utility function 165                          calc_accuracy_loader function 192
+attention mechanisms                                 calc_loss_batch function 145, 193–194
+   causal 74–82                                      calc_loss_loader function 144, 194
+   coding 50, 54                                     calculating, training and validation 140, 142
+   implementing self-attention with trainable        CausalAttention class 80–81, 86, 90
+       weights 64–74                                   module 83–84
+   multi-head attention 82–91                          object 86
+
+
+
+                                                 337
+
+
+
+                     Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+338                                              INDEX
+
+
+
+causal attention mask 190                            datasets
+causal attention mechanism 74–82                       downloading 207
+cfg dictionary 115, 119                                preparing 324
+classification                                         utilizing large 10
+   fine-tuning                                       DDP (DistributedDataParallel) strategy 282
+      categories of 170                              ddp_setup function 286
+      preparing dataset 172–175                      decode method 27, 33–34
+   fine-tuning for                                   decoder 52
+      adding classification head 183–190             decoding strategies to control randomness
+      calculating classification loss and                  151–159
+          accuracy 190–194                             modifying text generation function 157
+      supervised data 195–200                          temperature scaling 152–155
+      using LLM as spam classifier 200                 top-k sampling 155
+   tasks 7                                           deep learning 253
+classify_review function 200                           library 252
+clip_grad_norm_ function 317                         destroy_process_group function 284
+clipping, gradient 317                               device variable 224
+code for data loaders 301                            dim parameter 101–102
+coding                                               DistributedDataParallel class 284
+   attention mechanisms 54                           DistributedSampler 283–284
+   GPT model 117–122                                 Dolma: An Open Corpus of Three Trillion Tokens
+collate function 211                                       for LLM Pretraining Research (Soldaini
+computation graphs 261                                     et al.) 11
+compute_accuracy function 277–278                    dot products 58
+computing gradients 258                              d_out argument 90, 301
+connections, shortcut 109–113                        download_and_load_gpt2 function 161, 163, 182
+context, adding special tokens 29–32                 drop_last parameter 273
+context_length 47, 95                                dropout
+context vectors 57, 64, 85                              defined 78
+conversational performance 236                          layers 276
+converting tokens into token IDs 24–29               drop_rate 95
+cosine decay 313, 316                                .dtype attribute 259
+create_dataloader_v1 function 39                     DummyGPTClass 98
+cross_entropy function 138–139                       DummyGPTModel 95, 97–98, 117
+CUDA_VISIBLE_DEVICES environment                     DummyLayerNorm 97, 99, 117
+      variable 286                                      placeholder 100
+custom_collate_draft_1 215                           DummyTransformerBlock 97, 117
+custom_collate_draft_2 218
+custom_collate_fn function 224, 308                  E
+
+D                                                    emb_dim 95
+                                                     Embedding layer 161
+data, sampling with sliding window 35–41             embedding size 46
+DataFrame 173                                        emergent behavior 14
+data list 207, 209                                   encode method 27, 33, 37
+DataLoader class 38, 211, 224, 270–272               encoder 52
+data loaders 175–181                                 encoding word positions 43–47
+  code for 301                                       entry dictionary 209
+  creating for instruction dataset                   eps variable 103
+        224–226                                      .eval() mode 126
+  efficient 270–274                                  eval_iter value 200
+Dataset class 38, 177, 270–272, 274                  evaluate_model function 147–148, 196
+
+
+
+
+                       Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                                   INDEX                                            339
+
+
+F                                                      __getitem__ method 271
+                                                       Google Colab 257
+feedforward layer 267                                  GPT-2 94
+FeedForward module 107–108, 113                           model 230
+feed forward network, implementing with GELU              tokenizer 176
+      activations 105–109                              gpt2-medium355M-sft.pth file 238
+find_highest_gradient function 318                     GPT-3 11, 94
+fine-tuning                                            GPT-4 239
+   categories of 170                                   GPT_CONFIG_124M dictionary 95, 97, 107,
+   creating data loaders for instruction                     116–117, 120, 127, 130
+         dataset 224–226                               GPTDatasetV1 class 38–39
+   evaluating fine-tuned LLMs 238–247                  gpt_download.py Python module 161
+   extracting and saving responses 233–238             GPT (Generative Pre-trained Transformer) 8,
+   for classification 169                                    18, 93
+      adding classification head 183–190                  architecture 12–14
+      calculating classification loss and                 coding 117–122
+           accuracy 190–194                               coding architecture 93–99
+      data loaders 175–181                                implementing feed forward network with GELU
+      fine-tuning model on supervised data                      activations 105–109
+           195–200                                        implementing from scratch, shortcut
+      initializing model with pretrained                        connections 109–113
+           weights 181                                    implementing from scratch to generate text
+      preparing dataset 172–175                                 92, 122
+      using LLM as spam classifier 200                    implementing model from scratch 99–105,
+   instruction data 230–233                                     113–116
+   instruction fine-tuning, overview 205               GPTModel 119, 121–122, 133, 146, 182, 330
+   LLMs, to follow instructions 204                       class 122, 130, 182, 326
+   organizing data into training batches 211–223          code 141
+   supervised instruction fine-tuning, preparing          implementation 166
+         dataset for 207–211                              instance 131, 159, 164–167
+FineWeb Dataset 295                                    GPUs (graphics processing units), optimizing
+first_batch variable 39                                      training performance with 279–288
+format_input function 209–210, 242, 307                .grad attribute 318
+forward method 97, 109, 267, 330                       grad_fn value 268
+foundation model 7                                     grad function 264
+fully connected layer 267                              gradient clipping 313, 317
+functools standard library 224                         gradients 263
+                                                       greedy decoding 125, 152
+G
+                                                       I
+GELU (Gaussian error linear unit) 105, 107, 293
+  activation function 104, 111                         information leakage 76
+GenAI (generative AI) 3                                __init__ constructor 71, 81, 119, 266–267, 271
+generate_and_print_sample function 147–148,            initializing model 326
+    151, 154                                           initial_lr 314
+generate function 157, 159, 167, 228, 234–235,         init_process_group function 284
+    237, 305                                           input_chunk tensor 38
+generate_model_scores function 246                     input_embeddings 47
+generate_simple function 157, 159                      'input' object 208
+generate_text_simple function 125–126, 131–132,        instruction data, fine-tuning LLMs on 230–233
+    134, 148, 151–153                                  instruction dataset 205
+generative text models, evaluating 129                 InstructionDataset class 212, 224, 308
+
+
+
+
+                    Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+340                                                  INDEX
+
+
+
+instruction fine-tuning 7, 170, 322                      LoRALayer class 329–330
+  instruction following, creating data loaders for       LoRA (low-rank adaptation) 247, 322
+        instruction dataset 224–226                         parameter-efficient fine-tuning 324, 326
+  'instruction' object 208                               loss.backward() function 112
+  instruction–response pairs 207                         losses 140, 142
+  loading pretrained LLMs 226–229                        loss metric 132
+  overview 205                                           lr (learning rate) 275
+
+K                                                        M
+keepdim parameter 101                                    machine learning 253
+                                                         Machine Learning Q and AI (Raschka) 290
+L                                                        macOS 282
+                                                         main function 286
+LayerNorm 103, 115, 117, 119                             masked attention 74
+layer normalization 99–105                               .matmul method 261
+learning rate warmup 313–314                             matrices 258–261
+__len__ method 271                                       max_length 38, 141, 178, 306
+LIMA dataset 296                                         minbpe repository 291
+Linear layers 95, 107, 329–330, 332–333                  model_configs table 164
+Linear layer weights 330                                 model.eval() function 160
+LinearWithLoRA layer 330–331, 333                        model.named_parameters() function 112
+LitGPT 249                                               model.parameters() method 129
+LLama 2 model 141                                        model_response 238
+Llama 3 model 238                                        model.train() setting 276
+llama.cpp library 238                                    model weights, loading and saving in PyTorch
+LLMs (large language models) 17–18                            159
+   applications of 4                                     Module base class 265
+   building and using 5–7, 14                            mps device 224
+   coding architecture 93–99                             mp.spawn() call 286
+   coding attention mechanisms, causal attention         multi-head attention 80, 82–91
+         mechanism 74–82                                   implementing with weight splits 86–91
+   fine-tuning 230–233, 238–247, 295                       stacking multiple single-head attention
+   fine-tuning for classification 183–194, 200                  layers 82–85
+   implementing GPT model, implementing feed             MultiHeadAttention class 86–87, 90–91, 292
+         forward network with GELU                       MultiHeadAttentionWrapper class 83–87, 90
+         activations 105–109                             multilayer neural networks, implementing
+   instruction fine-tuning, loading pretrained                265–269
+         LLMs 226–229                                    multinomial function 153–155
+   overview of 1–4                                       multiprocessing.spawn function 284
+   pretraining 132, 140, 142, 146–151, 159               multiprocessing submodule 284
+   training function 313, 319–321
+   training loop, gradient clipping 317                  N
+   transformer architecture 7–10
+   utilizing large datasets 10                           NeuralNetwork model 284
+   working with text data, word embeddings 18–20         neural networks
+loading, pretrained weights from OpenAI                    implementing feed forward network with
+      160–167                                                   GELU activations 105–109
+load_state_dict method 160                                 implementing multilayer neural networks
+load_weights_into_gpt function 165–166, 182                     265–269
+logistic regression loss function 293                    NEW_CONFIG dictionary 164
+logits tensor 139                                        n_heads 95
+
+
+
+
+                       Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                                   INDEX                                              341
+
+nn.Linear layers 72                                       decoding strategies to control randomness
+nn.Module 71, 97                                               151–159
+numel() method 120                                        loading and saving model weights in
+num_heads dimension 88                                         PyTorch 159
+num_tokens dimension 88                                   loading pretrained weights from OpenAI
+                                                               160–167
+O                                                         on unlabeled data 128
+                                                          training LLMs 146–151
+Ollama application 238, 241                              using GPT to generate text 130
+Ollama Llama 3 method 309                              print_gradients function 112
+ollama run command 242                                 print_sampled_tokens function 155, 304
+ollama run llama3 command 240–241                      print statement 24
+ollama serve command 239–242                           Prometheus model 297
+OLMo 294                                               prompt styles 209
+one-dimensional tensor (vector) 259                    .pth extension 159
+OpenAI, loading pretrained weights from                Python version 254
+     160–167                                           PyTorch
+OpenAI’s GPT-3 Language Model: A Technical                and Torch 256
+     Overview 293                                         automatic differentiation 263–265
+optimizer.step() method 276                               computation graphs 261
+optimizer.zero_grad() method 276                          data loaders 210
+out_head 97                                               dataset objects 325
+output layer nodes 183                                    efficient data loaders 270–274
+'output' object 208                                       implementing multilayer neural networks
+                                                               265–269
+P                                                         installing 254–257
+                                                          loading and saving model weights in 159
+parameter-efficient fine-tuning 322                       optimizing training performance with
+  LoRA (low-rank adaptation) 322                               GPUs 279–288
+  preparing dataset 324                                   overview 251–257
+parameters 129                                            saving and loading models 278
+  calculating 302                                         training loops 274–278
+params dictionary 162, 164–165                           understanding tensors 258–261
+partial derivatives 263                                  with a NumPy-like API 258
+partial function 224
+peak_lr 314                                            Q
+perplexity 139
+Phi-3 model 297                                        qkv_bias 95
+PHUDGE model 297                                       Q query matrix 88
+pip installer 33                                       query_llama function 243
+plot_losses function 232                               query_model function 242–243
+plot_values function 199
+pos_embeddings 47                                      R
+Post-LayerNorm 115
+preference fine-tuning 298                             random_split function 175
+Pre-LayerNorm 115                                      rank argument 286
+pretokenizes 212                                       raw text 6
+pretrained weights, initializing model with 181        register_buffer 81
+pretraining 7                                          re library 22
+  calculating text generation loss 132                 ReLU (rectified linear unit) 100, 105
+  calculating training and validation set losses       .replace() method 235
+        140, 142                                       replace_linear_with_lora function 330, 332
+
+
+
+
+                     Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+342                                               INDEX
+
+
+
+.reshape method 260–261                               T
+re.split command 22
+responses, extracting and saving 233–238              target_chunk tensor 38
+retrieval-augmented generation 19                     targets tensor 139
+r/LocalLLaMA subreddit 248                            temperature scaling 151–152, 154–155
+RMSNorm 292                                           tensor2d 259
+RNNs (recurrent neural networks) 52                   tensor3d 259
+                                                      Tensor class 258
+S                                                     tensor library 252
+                                                      tensors 258–261
+saving and loading models 278                            common tensor operations 260
+scalars 258–261                                          scalars, vectors, matrices, and tensors 258–261
+scaled dot-product attention 64                          tensor data types 259
+scaled_dot_product function 292                          three-dimensional tensor 259
+scale parameter 103                                      two-dimensional tensor 259
+sci_mode parameter 102                                test_data set 246
+SelfAttention class 90                                test_loader 272
+self-attention mechanism 55–64                        test_set dictionary 237–238
+   computing attention weights for all input          text completion 205
+        tokens 61–64                                  text data 17
+   implementing with trainable weights 64–74             adding special context tokens 29–32
+   without trainable weights 56–61                       converting tokens into token IDs 24–29
+SelfAttention_v1 class 71, 73                            creating token embeddings 42–43
+SelfAttention_v2 class 73                                encoding word positions 43–47
+self.out_proj layer 90                                   sliding window 35–41
+self.register_buffer() call 81                           tokenization, byte pair encoding 33–35
+self.use_shortcut attribute 111                          word embeddings 18–20
+Sequential class 267                                  text_data 314
+set_printoptions method 277                           text generation 122
+settings dictionary 162, 164                             using GPT to generate text 130
+SGD (stochastic gradient descent) 275                 text generation function, modifying 157
+.shape attribute 260, 271                             text generation loss 132
+shift parameter 103                                   text_to_token_ids function 131
+shortcut connections 109–113                          tiktoken package 176, 178
+SimpleTokenizerV1 class 27                            .T method 261
+SimpleTokenizerV2 class 29, 31, 33                    .to() method 259, 280
+single-head attention, stacking multiple layers       token_embedding_layer 46–47
+      82–85                                           token embeddings 42–43
+sliding window 35–41                                  token IDs 24–29
+softmax function 269, 276                             token_ids_to_text function 131
+softmax_naive function 60                             tokenization, byte pair encoding 33–35
+SpamDataset class 176, 178                            tokenizing text 21–24
+spawn function 286                                    top-k sampling 151, 155–156
+special context tokens 29–32                          torch.argmax function 125
+state_dict 160, 279                                   torchaudio library 255
+stride setting 39                                     torch.manual_seed(123) 272
+strip() function 229                                  torch.nn.Linear layers 267
+supervised data, fine-tuning model on 195–200         torch.no_grad() context manager 269
+supervised instruction fine-tuning 205                torch.save function 159
+   preparing dataset for 207–211                      torch.sum method 277
+supervised learning 253                               torch.tensor function 258
+SwiGLU (Swish-gated linear unit) 105                  torchvision library 255
+
+
+
+
+                       Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                                 INDEX                                                343
+
+total_loss variable 145                              unlabeled data, decoding strategies to control
+ToyDataset class 271                                     randomness 151–159
+tqdm progress bar utility 242
+train_classifier_simple function 197, 200            V
+train_data subset 143
+training, optimizing performance with GPUs           val_data subset 143
+      279–288                                        variable-length inputs 142
+   PyTorch computations on GPU devices 279           vectors 258–261
+   selecting available GPUs on multi-GPU             .view method 87
+        machine 286–288                              vocab_size 95
+   single-GPU training 280                           v vector 317
+   training with multiple GPUs 282–288
+training batches, organizing data into 211–223       W
+training function 319–321
+   enhancing 313                                     .weight attribute 129, 161
+   modified 319–321                                  weight_decay parameter 200
+training loops 274–278                               weight parameters 66, 129
+   cosine decay 316                                  weights
+   gradient clipping 317                               initializing model with pretrained weights 181
+   learning rate warmup 314                            loading pretrained weights from OpenAI
+train_loader 272                                       160–167
+train_model_simple function 147, 149, 160, 195       weight splits 86–91
+train_ratio 142                                      Wk matrix 65, 71
+train_simple_function 305                            Word2Vec 19
+transformer architecture 3, 7–10, 55                 word embeddings 18–20
+TransformerBlock class 115                           word positions, encoding 43–47
+transformer blocks 93, 185                           Wq matrix 65, 71, 88
+   connecting attention and linear layers in         Wv matrix 65, 71
+        113–116
+.transpose method 87                                 X
+tril function 75
+                                                     X training example 268
+U
+                                                     Z
+UltraChat dataset 297
+unbiased parameter 103                               zero-dimensional tensor (scalar) 259
+
+
+
+
+                    Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                      RELATED MANNING TITLES
+
+
+                  Deep Learning with Python, Second Edition
+                  by Francois Chollet
+                  ISBN 9781617296864
+                  504 pages, $59.99
+                  October 2021
+
+
+
+
+                  Generative AI in Action
+                  by Amit Bahree
+                  ISBN 9781633436947
+                  469 pages (estimated), $59.99
+                  October 2024 (estimated)
+
+
+
+
+                  Machine Learning Algorithms in Depth
+                  by Vadim Smolyakov
+                  ISBN 9781633439214
+                  328 pages, $79.99
+                  July 2024
+
+
+
+
+For ordering information, go to www.manning.com
+
+Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+RELATED MANNING TITLES
+
+
+                            Inside Deep Learning
+                            by Edward Raff
+                            Foreword by Kirk Borne
+                            ISBN 9781617298639
+                            600 pages, $59.99
+                            April 2022
+
+
+
+
+                            Math and Architectures of Deep Learning
+                            by Krishnendu Chaudhury
+                            with Ananya H. Ashok, Sujay Narumanchi,
+                            Devashish Shankar
+                            Foreword by Prith Banerjee
+                            ISBN 9781617296482
+                            552 pages, $69.99
+                            April 2024
+
+
+
+
+                            Transformers in Action
+                            by Nicole Koenigstein
+                            ISBN 9781633437883
+                            393 pages (estimated), $59.99
+                            February 2025 (estimated)
+
+
+
+
+           For ordering information, go to www.manning.com
+
+           Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+             Hands-on projects for learning your way
+liveProjects are an exciting way to develop your skills that’s just like learning on the job.
+
+In a Manning liveProject, you tackle a real-world IT challenge and work out your own
+solutions. To make sure you succeed, you’ll get 90 days of full and unlimited access to a
+hand-picked list of Manning book and video resources.
+
+Here’s how liveProject works:
+
+      Achievable milestones. Each project is broken down into steps and sections so
+    •	
+      you can keep track of your progress.
+
+      Collaboration and advice. Work with other liveProject participants through
+    •	
+      chat, working groups, and peer project reviews.
+
+    • Compare your results. See how your work shapes up against an expert
+       implementation by the liveProject’s creator.
+      Everything you need to succeed. Datasets and carefully selected learning
+    •	
+      resources come bundled with every liveProject.
+
+      Build your portfolio. All liveProjects teach skills that are in demand from
+    •	
+      industry. When you’re finished, you’ll have the satisfaction that comes with
+      success and a real project to add to your portfolio.
+
+      Explore dozens of data, development, and cloud engineering
+                  liveProjects at www.manning.com!
+                 Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+                                                                Output text
+
+
+
+
+                                                           Postprocessing steps
+
+
+
+
+                                                               GPT-like
+                                                            decoder-only
+                                                             transformer
+
+
+
+                          Token embeddings:
+
+
+
+                                 Token IDs:     40134    2052      133         389          12
+
+
+
+                             Tokenized text:      This     is       an        example   .
+This section covers the
+concept of splitting
+text into tokens
+                                  Input text:               This is an example.
+
+
+
+A view of the text processing steps in the context of an LLM. The process starts with input
+text, which is broken down into tokens and then converted into numerical token IDs. These IDs
+are linked to token embeddings that serve as the input for the GPT model. The model processes
+these embeddings and generates output text. Finally, the output undergoes postprocessing
+steps to produce the final text. This flow illustrates the basic operations of tokenization,
+embedding, transformation, and postprocessing in a GPT model that is implemented from
+the ground up in this book.
+
+
+
+
+             Licensed to Christopher Funderburk <cmfunderburk@gmail.com>
+AI
+
+
+
+     BUILD A   Large Language Model (FROM SCRATCH)                     “ Truly inspirational! It
+                                                                      motivates you to put your
+                                Sebastian Raschka
+                                                                       new skills into action.
+                                                                          —Benjamin Muskalla  ”
+    hysicist Richard P. Feynman reportedly said, “I don’t
+
+P
+                                                                         Senior Engineer, GitHub
+    understand anything I can’t build.” Based on this same
+    powerful principle, bestselling author Sebastian
+Raschka guides you step by step as you build a GPT-style             “andThcomprehensive
+                                                                            e most understandable
+                                                                                          explana-
+LLM that you can run on your laptop. This is an engaging              tion of language models yet!
+book that covers each stage of the process, from planning                Its unique and practical
+and coding to training and fine-tuning.                              teaching style achieves a level
+Build a Large Language Model (From Scratch) is a practical and         of understanding you can’t
+eminently-satisfying hands-on journey into the foundations
+of generative AI. Without relying on any existing LLM
+                                                                           get any other way.
+                                                                            —Cameron Wolfe          ”
+libraries, you’ll code a base model, evolve it into a text clas-          Senior Scientist, Netflix
+sifier, and ultimately create a chatbot that can follow your
+conversational instructions. And you’ll really understand it
+because you built it yourself!
+                                                                      “knowledge
+                                                                        Sebastian combines deep
+                                                                                  with practical
+                                                                    engineering skills and a knack
+What’s Inside                                                         for making complex ideas
+                                                                       simple. This is the guide
+     ●   Plan and code an LLM comparable to GPT-2
+     ●
+
+
+     ●
+         Load pretrained weights
+         Construct a complete training pipeline
+                                                                             you need!
+                                                                         —Chip Huyen, author of ”
+                                                                    Designing Machine Learning Systems
+     ●   Fine-tune your LLM for text classification                         and AI Engineering
+     ●   Develop LLMs that follow human instructions
+Readers need intermediate Python skills and some know-              “age.DefiHighly
+                                                                              nitive, up-to-date cover-
+                                                                                     recommended!
+                                                                                                    ”
+ledge of machine learning. The LLM you create will run on            —Dr. Vahid Mirjalili, Senior Data
+any modern laptop and can optionally utilize GPUs.                        Scientist, FM Global
+
+Sebastian Raschka is a Staff Research Engineer at Lightning
+AI, where he works on LLM research and develops open-
+source software.
+                                                                               See first page
+The technical editor on this book was David Caswell.
+
+               For print book owners, all ebook formats are free:
+                     https://www.manning.com/freebook
+                                                                             ISBN-13: 978-1-63343-716-6
+
+
+
+
+            MANNING
+
