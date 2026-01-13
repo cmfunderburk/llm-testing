@@ -716,6 +716,240 @@ h3 { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--color-text-muted)
 }
 
 /* =============================================================================
+   Text Generation (Phase 6)
+   ============================================================================= */
+
+.text-generation,
+.attention-visualization,
+.checkpoint-browser {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.section-description {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  margin-bottom: 1.5rem;
+}
+
+.generation-form,
+.attention-form {
+  margin-bottom: 1.5rem;
+}
+
+.form-section {
+  margin-bottom: 1rem;
+}
+
+.form-section label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+
+.form-section textarea,
+.form-section input[type="text"] {
+  width: 100%;
+  padding: 0.75rem;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.form-section input[type="number"] {
+  width: 100px;
+  padding: 0.5rem;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.875rem;
+}
+
+.form-section input[type="range"] {
+  width: 100%;
+  accent-color: var(--color-primary);
+}
+
+.param-value {
+  font-family: var(--font-mono);
+  color: var(--color-primary);
+  margin-left: 0.5rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+.btn-generate {
+  width: 100%;
+  margin-top: 1rem;
+}
+
+.generation-error,
+.analysis-error {
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  color: var(--color-danger);
+  margin-bottom: 1rem;
+}
+
+.generation-result,
+.attention-result {
+  margin-top: 1.5rem;
+}
+
+.result-meta {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.result-text {
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* =============================================================================
+   Attention Visualization (Phase 6)
+   ============================================================================= */
+
+.attention-info {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-weight: normal;
+  margin-left: 1rem;
+}
+
+.attention-heatmap {
+  display: inline-block;
+  margin: 1rem 0;
+}
+
+.heatmap-row {
+  display: flex;
+}
+
+.heatmap-cell {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.625rem;
+  border: 1px solid var(--color-border);
+}
+
+.heatmap-cell.header,
+.heatmap-cell.row-header {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.heatmap-cell.corner {
+  background: transparent;
+  border: none;
+}
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.legend-gradient {
+  width: 100px;
+  height: 12px;
+  background: linear-gradient(90deg, rgb(0, 50, 255), rgb(255, 50, 0));
+  border-radius: 2px;
+}
+
+/* =============================================================================
+   Checkpoint Browser (Phase 6)
+   ============================================================================= */
+
+.checkpoint-controls {
+  margin-bottom: 1rem;
+}
+
+.btn-secondary {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-border);
+}
+
+.checkpoints-empty {
+  text-align: center;
+  padding: 2rem;
+  color: var(--color-text-muted);
+}
+
+.checkpoints-empty .hint {
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.checkpoints-list {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.checkpoint-header,
+.checkpoint-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1fr 2fr;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.checkpoint-header {
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.625rem;
+}
+
+.checkpoint-row:hover {
+  background: var(--color-surface-alt);
+}
+
+.generate-view,
+.analysis-view {
+  max-width: 800px;
+}
+
+/* =============================================================================
    Responsive
    ============================================================================= */
 
@@ -727,6 +961,10 @@ h3 { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--color-text-muted)
   .dashboard-view {
     grid-template-columns: 1fr;
   }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 768px) {
@@ -736,5 +974,14 @@ h3 { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--color-text-muted)
 
   .main-content {
     margin-left: 0;
+  }
+
+  .checkpoint-header,
+  .checkpoint-row {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .col-time {
+    display: none;
   }
 }
