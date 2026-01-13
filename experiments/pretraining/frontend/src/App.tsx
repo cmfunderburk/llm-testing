@@ -17,6 +17,11 @@ import {
   SampleTextDisplay,
   ProgressIndicators,
 } from './components/dashboard';
+import {
+  TextGeneration,
+  AttentionVisualization,
+  CheckpointBrowser,
+} from './components/analysis';
 import './App.css';
 
 // WebSocket URL
@@ -97,16 +102,15 @@ function AppContent() {
       case 'generate':
         return (
           <div className="generate-view">
-            <h2>Text Generation</h2>
-            <p className="coming-soon">Generation interface coming in Phase 6</p>
+            <TextGeneration />
           </div>
         );
 
       case 'analysis':
         return (
           <div className="analysis-view">
-            <h2>Model Analysis</h2>
-            <p className="coming-soon">Analysis tools coming in Phase 6</p>
+            <AttentionVisualization />
+            <CheckpointBrowser />
           </div>
         );
 
