@@ -20,4 +20,72 @@ Usage:
 
     # Frontend (from experiments/pretraining/frontend/)
     npm run dev
+
+Quick Start:
+    >>> from experiments.pretraining import GPTModel, Tokenizer, get_dataloader
+    >>> from experiments.pretraining.config import GPT_CONFIGS
+    >>>
+    >>> # Create a nano model (~10M params)
+    >>> model = GPTModel(GPT_CONFIGS['nano'])
+    >>> tokenizer = Tokenizer()
+    >>>
+    >>> # Get data loader
+    >>> dl = get_dataloader('verdict', batch_size=4, context_length=128)
 """
+
+# Core model components
+from .model import (
+    GPTModel,
+    TransformerBlock,
+    MultiHeadAttention,
+    FeedForward,
+    LayerNorm,
+    GELU,
+    generate_text_simple,
+    create_model,
+)
+
+# Configuration
+from .config import (
+    GPTConfig,
+    GPT_CONFIGS,
+    get_config,
+)
+
+# Tokenization
+from .tokenizer import Tokenizer
+
+# Data pipeline
+from .data import (
+    GPTDataset,
+    TextFileDataset,
+    get_dataloader,
+    create_train_val_dataloaders,
+    create_sample_corpus,
+)
+
+__all__ = [
+    # Model
+    'GPTModel',
+    'TransformerBlock',
+    'MultiHeadAttention',
+    'FeedForward',
+    'LayerNorm',
+    'GELU',
+    'generate_text_simple',
+    'create_model',
+    # Config
+    'GPTConfig',
+    'GPT_CONFIGS',
+    'get_config',
+    # Tokenizer
+    'Tokenizer',
+    # Data
+    'GPTDataset',
+    'TextFileDataset',
+    'get_dataloader',
+    'create_train_val_dataloaders',
+    'create_sample_corpus',
+]
+
+__version__ = '0.1.0'

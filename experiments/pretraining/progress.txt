@@ -1,0 +1,67 @@
+## Progress Log: LLM Pretraining Lab
+
+Started: 2026-01-12
+
+---
+
+### Phase 1: Core Architecture
+
+#### Completed
+- [2026-01-12] FEAT-001: Multi-Head Attention Module - Implemented with causal masking, scaled dot-product attention, and educational comments explaining QKV projections and scaling factor
+- [2026-01-12] FEAT-002: Feed-Forward Network - Implemented with GELU activation and 4x expansion factor, comments explain why FFN follows attention
+- [2026-01-12] FEAT-003: Transformer Block - Pre-norm architecture with residual connections, comments explain pre-norm vs post-norm choice
+- [2026-01-12] FEAT-004: GPT Model - Full model with token/position embeddings, N transformer blocks, output projection. Parameter count calculation included
+- [2026-01-12] FEAT-005: BPE Tokenizer - tiktoken wrapper with GPT-2 vocabulary (50,257 tokens), encode/decode/tokenize methods
+- [2026-01-12] FEAT-006: Data Pipeline - Sliding window dataset with configurable stride, train/val split, corpus registry
+
+#### Issues Encountered
+- None
+
+#### Verification Results
+- MultiHeadAttention: (2, 128, 768) input -> (2, 128, 768) output
+- FeedForward: (2, 128, 256) input -> (2, 128, 256) output
+- TransformerBlock: (2, 128, 256) input -> (2, 128, 256) output
+- GPTModel (nano): (2, 64) input -> (2, 64, 50257) logits, ~30.5M params
+- Tokenizer: encode("Hello world") -> [15496, 995] -> "Hello world"
+- DataLoader: verdict corpus, batch_size=4, context_length=64 -> shapes correct
+
+#### Files Created
+- experiments/pretraining/model.py - GPT model implementation
+- experiments/pretraining/config.py - Model configurations (nano, small, medium)
+- experiments/pretraining/tokenizer.py - BPE tokenizer wrapper
+- experiments/pretraining/data.py - Data pipeline
+- experiments/pretraining/corpus/verdict.txt - Test corpus
+- experiments/pretraining/corpus/tiny.txt - Minimal test corpus
+
+---
+
+### Phase 2: Training Infrastructure
+[Not started - awaiting user approval to proceed]
+
+---
+
+### Phase 3: Backend API
+[Not started]
+
+---
+
+### Phase 4: Frontend Foundation
+[Not started]
+
+---
+
+### Phase 5: Real-time Dashboard
+[Not started]
+
+---
+
+### Phase 6: Analysis Tools
+[Not started]
+
+---
+
+## Summary Statistics
+| Metric | Count |
+|--------|-------|
+| Features completed | 6/28 |
+| Phases completed | 1/6 |
