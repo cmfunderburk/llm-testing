@@ -1,0 +1,156 @@
+/**
+ * Training Controls Component
+ *
+ * Start/pause/resume/stop controls and configuration form for training.
+ */
+
+import { useState } from 'react';
+import { useTraining } from '../../context/TrainingContext';
+import type { TrainingConfig } from '../../types';
+import { MODEL_CONFIGS, CORPORA } from '../../types';
+
+export function TrainingControls() {
+  const { status, isLoading, startTraining, pauseTraining, resumeTraining, stopTraining } = useTraining();
+
+  const [config, setConfig] = useState<TrainingConfig>({
+    config_name: 'nano',
+    corpus: 'verdict',
+    epochs: 10,
+    batch_size: 4,
+    learning_rate: 3e-4,
+    warmup_steps: 100,
+    save_checkpoints: false,
+  });
+
+  const handleStart = () => {
+    startTraining(config);
+  };
+
+  const canStart = status.state === 'idle' || status.state === 'completed' || status.state === 'error';
+  const canPause = status.state === 'running';
+  const canResume = status.state === 'paused';
+  const canStop = status.state === 'running' || status.state === 'paused';
+
+  return (
+    <div className="training-controls">
+      <h3>Training Configuration</h3>
+
+      <div className="config-form">
+        <div className="form-row">
+          <label>Model Size</label>
+          <select
+            value={config.config_name}
+            onChange={(e) => setConfig({ ...config, config_name: e.target.value })}
+            disabled={!canStart}
+          >
+            {MODEL_CONFIGS.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-row">
+          <label>Corpus</label>
+          <select
+            value={config.corpus}
+            onChange={(e) => setConfig({ ...config, corpus: e.target.value })}
+            disabled={!canStart}
+          >
+            {CORPORA.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-row">
+          <label>Epochs</label>
+          <input
+            type="number"
+            value={config.epochs}
+            onChange={(e) => setConfig({ ...config, epochs: parseInt(e.target.value) || 1 })}
+            min={1}
+            max={100}
+            disabled={!canStart}
+          />
+        </div>
+
+        <div className="form-row">
+          <label>Batch Size</label>
+          <input
+            type="number"
+            value={config.batch_size}
+            onChange={(e) => setConfig({ ...config, batch_size: parseInt(e.target.value) || 1 })}
+            min={1}
+            max={32}
+            disabled={!canStart}
+          />
+        </div>
+
+        <div className="form-row">
+          <label>Learning Rate</label>
+          <input
+            type="number"
+            value={config.learning_rate}
+            onChange={(e) => setConfig({ ...config, learning_rate: parseFloat(e.target.value) || 1e-4 })}
+            step={0.0001}
+            min={0.00001}
+            max={0.01}
+            disabled={!canStart}
+          />
+        </div>
+
+        <div className="form-row">
+          <label>Warmup Steps</label>
+          <input
+            type="number"
+            value={config.warmup_steps}
+            onChange={(e) => setConfig({ ...config, warmup_steps: parseInt(e.target.value) || 0 })}
+            min={0}
+            max={1000}
+            disabled={!canStart}
+          />
+        </div>
+
+        <div className="form-row checkbox">
+          <label>
+            <input
+              type="checkbox"
+              checked={config.save_checkpoints}
+              onChange={(e) => setConfig({ ...config, save_checkpoints: e.target.checked })}
+              disabled={!canStart}
+            />
+            Save Checkpoints
+          </label>
+        </div>
+      </div>
+
+      <div className="control-buttons">
+        {canStart && (
+          <button className="btn btn-primary" onClick={handleStart} disabled={isLoading}>
+            Start Training
+          </button>
+        )}
+
+        {canPause && (
+          <button className="btn btn-warning" onClick={pauseTraining} disabled={isLoading}>
+            Pause
+          </button>
+        )}
+
+        {canResume && (
+          <button className="btn btn-success" onClick={resumeTraining} disabled={isLoading}>
+            Resume
+          </button>
+        )}
+
+        {canStop && (
+          <button className="btn btn-danger" onClick={stopTraining} disabled={isLoading}>
+            Stop
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default TrainingControls;

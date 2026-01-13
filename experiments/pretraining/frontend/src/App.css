@@ -1,0 +1,519 @@
+/**
+ * LLM Pretraining Lab - Styles
+ *
+ * Clean, functional CSS for the training dashboard.
+ */
+
+/* =============================================================================
+   CSS Variables
+   ============================================================================= */
+
+:root {
+  --color-bg: #1a1a2e;
+  --color-surface: #16213e;
+  --color-surface-alt: #1f2b47;
+  --color-border: #2a3f5f;
+  --color-text: #e4e4e4;
+  --color-text-muted: #8b9dc3;
+  --color-primary: #4a9eff;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-accent: #818cf8;
+
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
+
+  --header-height: 60px;
+  --sidebar-width: 200px;
+}
+
+/* =============================================================================
+   Base Styles
+   ============================================================================= */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+h1, h2, h3, h4 {
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+h2 { font-size: 1.5rem; margin-bottom: 1rem; }
+h3 { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--color-text-muted); }
+
+/* =============================================================================
+   Layout
+   ============================================================================= */
+
+.app-layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  padding-top: var(--header-height);
+}
+
+.main-content {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  padding: 1.5rem;
+  overflow-y: auto;
+}
+
+/* =============================================================================
+   Header
+   ============================================================================= */
+
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-height);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.5rem;
+  z-index: 100;
+}
+
+.header-brand h1 {
+  font-size: 1.25rem;
+  color: var(--color-text);
+}
+
+.header-subtitle {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-left: 0.5rem;
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.connection-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-danger);
+}
+
+.connection-indicator.connected .status-dot {
+  background: var(--color-success);
+}
+
+.training-state {
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.training-state-running { background: var(--color-success); color: #000; }
+.training-state-paused { background: var(--color-warning); color: #000; }
+.training-state-error { background: var(--color-danger); color: #fff; }
+.training-state-completed { background: var(--color-primary); color: #fff; }
+
+/* =============================================================================
+   Sidebar
+   ============================================================================= */
+
+.sidebar {
+  position: fixed;
+  left: 0;
+  top: var(--header-height);
+  bottom: 0;
+  width: var(--sidebar-width);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 0;
+}
+
+.nav-list {
+  list-style: none;
+  flex: 1;
+}
+
+.nav-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.5rem;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+}
+
+.nav-item:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.nav-item.active {
+  background: var(--color-surface-alt);
+  color: var(--color-primary);
+  border-left: 3px solid var(--color-primary);
+}
+
+.nav-icon {
+  font-size: 1.125rem;
+}
+
+.sidebar-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.version-info {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* =============================================================================
+   Dashboard View
+   ============================================================================= */
+
+.dashboard-view {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 1.5rem;
+}
+
+.dashboard-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.dashboard-sidebar {
+  /* Training controls sidebar */
+}
+
+/* =============================================================================
+   Metrics Display
+   ============================================================================= */
+
+.metrics-display {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+.metric-card {
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  text-align: center;
+}
+
+.metric-label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.metric-value {
+  font-size: 1.25rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.metric-value.loss {
+  color: var(--color-accent);
+}
+
+/* =============================================================================
+   Training Controls
+   ============================================================================= */
+
+.training-controls {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+}
+
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.form-row label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.form-row input,
+.form-row select {
+  padding: 0.5rem;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 0.875rem;
+}
+
+.form-row input:focus,
+.form-row select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.form-row input:disabled,
+.form-row select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-row.checkbox {
+  flex-direction: row;
+  align-items: center;
+}
+
+.form-row.checkbox label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-transform: none;
+  font-size: 0.875rem;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.form-row.checkbox input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.control-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* =============================================================================
+   Buttons
+   ============================================================================= */
+
+.btn {
+  padding: 0.625rem 1.25rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #3b8bdb;
+}
+
+.btn-success {
+  background: var(--color-success);
+  color: #000;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: #3fcc6c;
+}
+
+.btn-warning {
+  background: var(--color-warning);
+  color: #000;
+}
+
+.btn-warning:hover:not(:disabled) {
+  background: #e5ac20;
+}
+
+.btn-danger {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #e55c5c;
+}
+
+.btn-small {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+/* =============================================================================
+   Generation Log
+   ============================================================================= */
+
+.generation-log {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.empty-state {
+  color: var(--color-text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: 2rem;
+}
+
+.generations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.generation-item {
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+}
+
+.generation-header {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.generation-text {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text);
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* =============================================================================
+   Error Banner
+   ============================================================================= */
+
+.error-banner {
+  background: var(--color-danger);
+  color: #fff;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* =============================================================================
+   Coming Soon / Placeholder Views
+   ============================================================================= */
+
+.coming-soon {
+  color: var(--color-text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: 4rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+}
+
+.training-view,
+.generate-view,
+.analysis-view {
+  max-width: 600px;
+}
+
+/* =============================================================================
+   Responsive
+   ============================================================================= */
+
+@media (max-width: 1024px) {
+  .metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .dashboard-view {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    display: none;
+  }
+
+  .main-content {
+    margin-left: 0;
+  }
+}
