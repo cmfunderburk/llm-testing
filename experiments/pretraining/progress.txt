@@ -36,7 +36,29 @@ Started: 2026-01-12
 ---
 
 ### Phase 2: Training Infrastructure
-[Not started - awaiting user approval to proceed]
+
+#### Completed
+- [2026-01-12] FEAT-007: Training Loop - Cross-entropy loss, optimizer step, gradient clipping, periodic evaluation
+- [2026-01-12] FEAT-008: LR Scheduling - Linear warmup + cosine decay scheduler with configurable warmup steps
+- [2026-01-12] FEAT-009: Checkpointing - Save/load model+optimizer state, checkpoint listing, OFF by default per PRD
+- [2026-01-12] FEAT-010: Configuration System - CLI with argparse, supports all configs (nano/small/medium), override params
+- [2026-01-12] FEAT-011: Text Generation - Temperature scaling, top-k filtering, top-p (nucleus) sampling
+
+#### Issues Encountered
+- Small verdict corpus (2270 tokens) limits batch count with context_length=256
+- Resolved by testing with batch_size=2 or smaller context
+
+#### Verification Results
+- Training completes 1 epoch without errors
+- LR scheduler produces warmup + cosine decay curve
+- Checkpointing functions import and work correctly
+- CLI shows all options with --help
+- Text generation with temperature/top-k works
+
+#### Files Created
+- experiments/pretraining/train.py - Training loop with CLI
+- experiments/pretraining/checkpoint.py - Save/load utilities
+- experiments/pretraining/generate.py - Text generation with decoding strategies
 
 ---
 
@@ -63,5 +85,5 @@ Started: 2026-01-12
 ## Summary Statistics
 | Metric | Count |
 |--------|-------|
-| Features completed | 6/28 |
-| Phases completed | 1/6 |
+| Features completed | 11/28 |
+| Phases completed | 2/6 |
