@@ -27,6 +27,7 @@ class TrainingConfig(BaseModel):
     learning_rate: float = 3e-4
     warmup_steps: int = 100
     save_checkpoints: bool = False
+    context_length: Optional[int] = None  # Optional override for model's default
 
 
 class TrainingStatus(BaseModel):
@@ -49,6 +50,9 @@ class CheckpointInfo(BaseModel):
     train_loss: Optional[float]
     val_loss: Optional[float]
     timestamp: Optional[str]
+    corpus: Optional[str] = None
+    batch_size: Optional[int] = None
+    context_length: Optional[int] = None
 
 
 class GenerateRequest(BaseModel):
@@ -80,6 +84,19 @@ class AttentionResponse(BaseModel):
     head: Optional[int]
 
 
+class VRAMEstimate(BaseModel):
+    model_mb: float
+    optimizer_mb: float
+    gradients_mb: float
+    activations_mb: float
+    total_mb: float
+    total_gb: float
+    params: int
+    batch_size: int
+    context_length: int
+    warning: Optional[str] = None
+
+
 # =============================================================================
 # Training Manager
 # =============================================================================
@@ -105,12 +122,21 @@ class TrainingManager:
                 disconnected.append(ws)
 
         for ws in disconnected:
-            self.websocket_clients.remove(ws)
+            if ws in self.websocket_clients:
+                self.websocket_clients.remove(ws)
 
     async def start_training(self, config: TrainingConfig):
         """Start training in background."""
         if self.status.state in ("running", "loading"):
             raise HTTPException(status_code=400, detail="Training already running")
+
+        # Clear GPU memory from previous runs
+        import torch
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
 
         self.should_stop = False
         self.should_pause = False
@@ -131,6 +157,7 @@ class TrainingManager:
         from experiments.pretraining.data import create_train_val_dataloaders
         from experiments.pretraining.train import calc_loss_batch, get_lr_scheduler
         from experiments.pretraining.generate import generate_text
+        from experiments.pretraining.checkpoint import save_checkpoint
         import time
 
         try:
@@ -151,6 +178,9 @@ class TrainingManager:
                 "message": f"Loading corpus '{config.corpus}'... (this may take a minute for large datasets)",
             })
 
+            # Use provided context_length or fall back to model default
+            effective_context_length = config.context_length if config.context_length else model_config.context_length
+
             # Run blocking data loading in thread pool to not block the event loop
             loop = asyncio.get_event_loop()
             train_loader, val_loader = await loop.run_in_executor(
@@ -158,7 +188,7 @@ class TrainingManager:
                 lambda: create_train_val_dataloaders(
                     corpus=config.corpus,
                     batch_size=config.batch_size,
-                    context_length=model_config.context_length,
+                    context_length=effective_context_length,
                     tokenizer=tokenizer,
                 )
             )
@@ -239,7 +269,7 @@ class TrainingManager:
                     self.status.elapsed_time = elapsed
                     self.status.train_loss = loss.item()
 
-                    if global_step % 10 == 0:
+                    if global_step % 50 == 0:
                         metrics = {
                             "type": "metrics",
                             "step": global_step,
@@ -295,11 +325,50 @@ class TrainingManager:
                 }
                 await self.broadcast_metrics(generation_msg)
 
+                # Save checkpoint at end of each epoch (if enabled)
+                if config.save_checkpoints:
+                    checkpoint_path = save_checkpoint(
+                        model=model,
+                        optimizer=optimizer,
+                        config=model_config,
+                        config_name=config.config_name,
+                        step=global_step,
+                        epoch=epoch + 1,
+                        train_loss=self.status.train_loss,
+                        val_loss=self.status.val_loss,
+                        corpus=config.corpus,
+                        batch_size=config.batch_size,
+                        context_length=effective_context_length,
+                    )
+                    await self.broadcast_metrics({
+                        "type": "checkpoint",
+                        "step": global_step,
+                        "epoch": epoch + 1,
+                        "path": str(checkpoint_path),
+                    })
+
+            # Always save final model on completion
+            final_checkpoint_path = save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                config=model_config,
+                config_name=config.config_name,
+                step=global_step,
+                epoch=config.epochs,
+                train_loss=self.status.train_loss,
+                val_loss=self.status.val_loss,
+                filename="checkpoint_final.pt",
+                corpus=config.corpus,
+                batch_size=config.batch_size,
+                context_length=effective_context_length,
+            )
+
             self.status.state = "completed"
             await self.broadcast_metrics({
                 "type": "complete",
                 "final_step": global_step,
                 "final_train_loss": self.status.train_loss,
+                "checkpoint_path": str(final_checkpoint_path),
             })
 
         except Exception as e:
@@ -309,6 +378,14 @@ class TrainingManager:
                 "type": "error",
                 "message": str(e),
             })
+        finally:
+            # Clean up GPU memory
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            logger.info("GPU memory cleaned up after training")
 
     def pause_training(self):
         """Pause training."""
@@ -350,6 +427,37 @@ async def get_training_status():
     return training_manager.status
 
 
+@router.get("/estimate-vram", response_model=VRAMEstimate)
+async def estimate_vram(config_name: str = "nano", batch_size: int = 4, context_length: Optional[int] = None):
+    """Estimate VRAM requirements for a given configuration."""
+    from experiments.pretraining.config import get_config
+
+    try:
+        model_config = get_config(config_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Use provided context_length or fall back to model default
+    effective_context_length = context_length if context_length else model_config.context_length
+
+    # Create a modified config if context_length differs from default
+    if effective_context_length != model_config.context_length:
+        # Create a copy with the new context_length for estimation
+        from dataclasses import replace
+        model_config = replace(model_config, context_length=effective_context_length)
+
+    estimate = model_config.estimate_vram_mb(batch_size)
+
+    # Add warning if estimated VRAM is high
+    warning = None
+    if estimate["total_gb"] > 14:
+        warning = "May exceed 16GB VRAM. Consider reducing batch size."
+    elif estimate["total_gb"] > 10:
+        warning = "High VRAM usage. Monitor for OOM errors."
+
+    return VRAMEstimate(**estimate, warning=warning)
+
+
 @router.post("/start", response_model=TrainingStatus)
 async def start_training(config: TrainingConfig):
     """Start a new training run."""
@@ -379,23 +487,68 @@ async def stop_training():
 
 
 @router.get("/checkpoints", response_model=List[CheckpointInfo])
-async def list_checkpoints(config_name: str = "nano"):
+async def list_checkpoints_endpoint(config_name: str = "nano"):
     """List available checkpoints."""
     from experiments.pretraining.checkpoint import list_checkpoints
 
     checkpoints = list_checkpoints(config_name)
-    return [
-        CheckpointInfo(
-            id=f"{config_name}_{ckpt['step']}",
+    result = []
+    for ckpt in checkpoints:
+        # Build descriptive ID: nano_verdict_b4_ctx256_step1000
+        corpus = ckpt.get('corpus')
+        batch_size = ckpt.get('batch_size')
+        context_length = ckpt.get('context_length')
+
+        if corpus and batch_size and context_length:
+            ckpt_id = f"{config_name}_{corpus}_b{batch_size}_ctx{context_length}_step{ckpt['step']}"
+        else:
+            # Legacy checkpoint without training params
+            ckpt_id = f"{config_name}_step{ckpt['step']}"
+
+        result.append(CheckpointInfo(
+            id=ckpt_id,
             path=ckpt['path'],
             step=ckpt['step'],
             epoch=ckpt['epoch'],
             train_loss=ckpt['train_loss'],
             val_loss=ckpt['val_loss'],
             timestamp=ckpt['timestamp'],
-        )
-        for ckpt in checkpoints
-    ]
+            corpus=corpus,
+            batch_size=batch_size,
+            context_length=context_length,
+        ))
+    return result
+
+
+def _parse_checkpoint_id(checkpoint_id: str) -> tuple:
+    """
+    Parse checkpoint ID to extract config_name and step.
+
+    Handles both formats:
+    - New: nano_verdict_b4_ctx256_step1000
+    - Legacy: nano_step1000 or nano_1000
+    """
+    import re
+
+    # Try new format first: {config}_{corpus}_b{batch}_ctx{ctx}_step{step}
+    new_format = re.match(r'^(\w+)_\w+_b\d+_ctx\d+_step(\d+)$', checkpoint_id)
+    if new_format:
+        return new_format.group(1), int(new_format.group(2))
+
+    # Try format with _step suffix: nano_step1000
+    step_format = re.match(r'^(\w+)_step(\d+)$', checkpoint_id)
+    if step_format:
+        return step_format.group(1), int(step_format.group(2))
+
+    # Legacy format: nano_1000
+    parts = checkpoint_id.rsplit('_', 1)
+    if len(parts) == 2:
+        try:
+            return parts[0], int(parts[1])
+        except ValueError:
+            pass
+
+    raise ValueError(f"Invalid checkpoint ID format: {checkpoint_id}")
 
 
 @router.get("/checkpoints/{checkpoint_id}", response_model=CheckpointInfo)
@@ -403,15 +556,10 @@ async def get_checkpoint(checkpoint_id: str):
     """Get details for a specific checkpoint."""
     from experiments.pretraining.checkpoint import list_checkpoints
 
-    parts = checkpoint_id.rsplit('_', 1)
-    if len(parts) != 2:
-        raise HTTPException(status_code=400, detail="Invalid checkpoint ID format")
-
-    config_name, step_str = parts
     try:
-        step = int(step_str)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid step number")
+        config_name, step = _parse_checkpoint_id(checkpoint_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     checkpoints = list_checkpoints(config_name)
     for ckpt in checkpoints:
@@ -424,6 +572,9 @@ async def get_checkpoint(checkpoint_id: str):
                 train_loss=ckpt['train_loss'],
                 val_loss=ckpt['val_loss'],
                 timestamp=ckpt['timestamp'],
+                corpus=ckpt.get('corpus'),
+                batch_size=ckpt.get('batch_size'),
+                context_length=ckpt.get('context_length'),
             )
 
     raise HTTPException(status_code=404, detail="Checkpoint not found")
@@ -437,20 +588,27 @@ async def generate(request: GenerateRequest):
     from experiments.pretraining.config import get_config
     from experiments.pretraining.tokenizer import Tokenizer
     from experiments.pretraining.generate import generate_text
-    from experiments.pretraining.checkpoint import load_checkpoint, get_latest_checkpoint
+    from experiments.pretraining.checkpoint import load_checkpoint, list_checkpoints
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     tokenizer = Tokenizer()
 
     if request.checkpoint_id:
-        parts = request.checkpoint_id.rsplit('_', 1)
-        if len(parts) != 2:
-            raise HTTPException(status_code=400, detail="Invalid checkpoint ID")
+        try:
+            config_name, step = _parse_checkpoint_id(request.checkpoint_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-        config_name = parts[0]
-        checkpoint_path = get_latest_checkpoint(config_name)
+        # Find the specific checkpoint by step
+        checkpoints = list_checkpoints(config_name)
+        checkpoint_path = None
+        for ckpt in checkpoints:
+            if ckpt['step'] == step:
+                checkpoint_path = ckpt['path']
+                break
+
         if not checkpoint_path:
-            raise HTTPException(status_code=404, detail="No checkpoint found")
+            raise HTTPException(status_code=404, detail="Checkpoint not found")
 
         model, _, _ = load_checkpoint(checkpoint_path, device=device)
     else:

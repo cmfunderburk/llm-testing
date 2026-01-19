@@ -2,6 +2,7 @@
  * Learning Rate Chart Component
  */
 
+import { useMemo } from 'react';
 import {
   AreaChart,
   Area,
@@ -13,13 +14,42 @@ import {
 } from 'recharts';
 import { useTraining } from '../../context/TrainingContext';
 
+// Maximum points to render for performance
+const MAX_CHART_POINTS = 500;
+
+function downsampleData<T>(data: T[], maxPoints: number): T[] {
+  if (data.length <= maxPoints) return data;
+
+  const step = Math.ceil(data.length / maxPoints);
+  const sampled: T[] = [];
+
+  for (let i = 0; i < data.length; i += step) {
+    sampled.push(data[i]);
+  }
+
+  // Always include the last point for current state
+  if (sampled[sampled.length - 1] !== data[data.length - 1]) {
+    sampled.push(data[data.length - 1]);
+  }
+
+  return sampled;
+}
+
 export function LearningRateChart() {
   const { metricsHistory } = useTraining();
 
-  const chartData = metricsHistory.map((m) => ({
-    step: m.step,
-    lr: m.learning_rate,
-  }));
+  const chartData = useMemo(() => {
+    const mapped = metricsHistory.map((m) => ({
+      step: m.step,
+      lr: m.learning_rate,
+    }));
+    return downsampleData(mapped, MAX_CHART_POINTS);
+  }, [metricsHistory]);
+
+  const maxLR = useMemo(() => {
+    if (chartData.length === 0) return 0;
+    return Math.max(...chartData.map((d) => d.lr));
+  }, [chartData]);
 
   if (chartData.length === 0) {
     return (
@@ -31,8 +61,6 @@ export function LearningRateChart() {
       </div>
     );
   }
-
-  const maxLR = Math.max(...chartData.map((d) => d.lr));
 
   return (
     <div className="chart-container chart-small">

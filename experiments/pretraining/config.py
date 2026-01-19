@@ -107,6 +107,90 @@ class GPTConfig:
 
         return tok_emb + pos_emb + total_blocks + final_ln + out_head
 
+    def estimate_vram_mb(self, batch_size: int) -> dict:
+        """
+        Estimate VRAM requirements for training in MB.
+
+        Returns a breakdown of memory usage:
+        - model: Model parameters (fp32)
+        - optimizer: AdamW states (momentum + variance)
+        - gradients: Gradient storage
+        - activations: Forward pass activations (approximate)
+        - overhead: CUDA context, fragmentation, temp buffers
+        - total: Sum of all components
+
+        Note: This is an approximation. Actual usage may vary due to:
+        - CUDA memory fragmentation
+        - PyTorch memory allocator overhead
+        - Temporary buffers during computation
+        """
+        params = self.estimate_params()
+        bytes_per_param = 4  # fp32
+
+        # Model weights
+        model_bytes = params * bytes_per_param
+
+        # Optimizer states (AdamW: momentum + variance = 2x params)
+        optimizer_bytes = params * bytes_per_param * 2
+
+        # Gradients
+        gradient_bytes = params * bytes_per_param
+
+        # Activations (rough estimate for training)
+        # During training, PyTorch stores activations for the backward pass.
+        # Per layer: attention scores (batch * heads * seq * seq * 4 bytes)
+        #            + attention output (batch * seq * emb_dim * 4)
+        #            + FFN intermediates (batch * seq * 4*emb_dim * 4)
+        #            + residual connections, layer norms, etc.
+        #
+        # Empirically calibrated factor based on actual training runs
+        activation_factor = 100  # Higher to account for backward pass storage
+
+        activation_bytes = (
+            batch_size *
+            self.context_length *
+            self.emb_dim *
+            self.n_layers *
+            activation_factor
+        )
+
+        # Attention score matrices: batch * n_heads * seq_len^2 * 4 bytes * n_layers
+        attention_scores_bytes = (
+            batch_size *
+            self.n_heads *
+            self.context_length *
+            self.context_length *
+            4 *  # fp32
+            self.n_layers
+        )
+
+        # Fixed overhead: CUDA context (~1GB) + PyTorch allocator cache + misc
+        overhead_bytes = 1000 * 1024 * 1024
+
+        # Total activations including attention scores
+        total_activation_bytes = activation_bytes + attention_scores_bytes
+
+        # Safety multiplier for fragmentation, temp buffers, PyTorch caching
+        subtotal = model_bytes + optimizer_bytes + gradient_bytes + total_activation_bytes
+        fragmentation = int(subtotal * 0.20)  # ~20% fragmentation overhead
+
+        total_bytes = subtotal + overhead_bytes + fragmentation
+
+        # Convert to MB
+        mb = 1024 * 1024
+        return {
+            "model_mb": round(model_bytes / mb, 1),
+            "optimizer_mb": round(optimizer_bytes / mb, 1),
+            "gradients_mb": round(gradient_bytes / mb, 1),
+            "activations_mb": round(total_activation_bytes / mb, 1),
+            "overhead_mb": round((overhead_bytes + fragmentation) / mb, 1),
+            "total_mb": round(total_bytes / mb, 1),
+            "total_gb": round(total_bytes / (1024 * mb), 2),
+            "params": params,
+            "batch_size": batch_size,
+            "context_length": self.context_length,
+        }
+
 
 # =============================================================================
 # Predefined Configurations
