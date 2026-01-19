@@ -5,3 +5,4 @@ export { LearningRateChart } from './LearningRateChart';
 export { TokenCounter } from './TokenCounter';
 export { SampleTextDisplay } from './SampleTextDisplay';
 export { ProgressIndicators } from './ProgressIndicators';
+export { GenerationPanel } from './GenerationPanel';

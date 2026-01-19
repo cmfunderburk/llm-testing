@@ -22,6 +22,7 @@ export interface TrainingConfig {
   learning_rate: number;
   warmup_steps: number;
   save_checkpoints: boolean;
+  context_length?: number;  // Optional override for model's default
 }
 
 export interface TrainingStatus {
@@ -59,6 +60,9 @@ export interface CheckpointInfo {
   train_loss: number | null;
   val_loss: number | null;
   timestamp: string | null;
+  corpus?: string;
+  batch_size?: number;
+  context_length?: number;
 }
 
 export interface GenerateRequest {

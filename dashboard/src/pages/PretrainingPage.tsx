@@ -15,6 +15,7 @@ import {
   TokenCounter,
   SampleTextDisplay,
   ProgressIndicators,
+  GenerationPanel,
 } from '../components/pretraining';
 import { ErrorBanner } from '../components/shared';
 
@@ -88,6 +89,7 @@ export function PretrainingPage() {
               {status.state.charAt(0).toUpperCase() + status.state.slice(1)}
             </div>
           )}
+          <GenerationPanel />
         </div>
       </div>
     </div>

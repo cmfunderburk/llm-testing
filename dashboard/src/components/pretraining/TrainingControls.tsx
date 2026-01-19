@@ -2,10 +2,12 @@
  * Training Controls Component
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTraining } from '../../context/TrainingContext';
 import type { TrainingConfig } from '../../types';
 import { MODEL_CONFIGS, CORPORA } from '../../types';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // Model config display names with parameter counts
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
@@ -13,6 +15,23 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   small: 'small (~50M)',
   medium: 'medium (~124M)',
 };
+
+// Default context lengths for each model size
+const DEFAULT_CONTEXT_LENGTHS: Record<string, number> = {
+  nano: 256,
+  small: 512,
+  medium: 1024,
+};
+
+interface VRAMEstimate {
+  total_gb: number;
+  total_mb: number;
+  model_mb: number;
+  optimizer_mb: number;
+  gradients_mb: number;
+  activations_mb: number;
+  warning: string | null;
+}
 
 export function TrainingControls() {
   const { status, isLoading, startTraining, pauseTraining, resumeTraining, stopTraining } = useTraining();
@@ -25,7 +44,35 @@ export function TrainingControls() {
     learning_rate: 3e-4,
     warmup_steps: 100,
     save_checkpoints: false,
+    context_length: 256,
   });
+
+  const [vramEstimate, setVramEstimate] = useState<VRAMEstimate | null>(null);
+
+  // Auto-update context_length when model size changes
+  useEffect(() => {
+    const defaultContextLength = DEFAULT_CONTEXT_LENGTHS[config.config_name] || 256;
+    setConfig(prev => ({ ...prev, context_length: defaultContextLength }));
+  }, [config.config_name]);
+
+  // Fetch VRAM estimate when config changes
+  useEffect(() => {
+    const fetchEstimate = async () => {
+      try {
+        const contextLength = config.context_length || DEFAULT_CONTEXT_LENGTHS[config.config_name] || 256;
+        const res = await fetch(
+          `${API_URL}/api/pretraining/estimate-vram?config_name=${config.config_name}&batch_size=${config.batch_size}&context_length=${contextLength}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setVramEstimate(data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch VRAM estimate:', err);
+      }
+    };
+    fetchEstimate();
+  }, [config.config_name, config.batch_size, config.context_length]);
 
   const handleStart = () => {
     startTraining(config);
@@ -92,6 +139,19 @@ export function TrainingControls() {
         </div>
 
         <div className="form-row">
+          <label>Context Length</label>
+          <input
+            type="number"
+            value={config.context_length}
+            onChange={(e) => setConfig({ ...config, context_length: parseInt(e.target.value) || 64 })}
+            min={64}
+            max={2048}
+            step={64}
+            disabled={!canStart}
+          />
+        </div>
+
+        <div className="form-row">
           <label>Learning Rate</label>
           <input
             type="number"
@@ -128,6 +188,18 @@ export function TrainingControls() {
           </label>
         </div>
       </div>
+
+      {vramEstimate && (
+        <div className={`vram-estimate ${vramEstimate.warning ? 'vram-warning' : ''}`}>
+          <div className="vram-header">
+            <span className="vram-label">Est. VRAM</span>
+            <span className="vram-value">{vramEstimate.total_gb.toFixed(1)} GB</span>
+          </div>
+          {vramEstimate.warning && (
+            <div className="vram-warning-text">{vramEstimate.warning}</div>
+          )}
+        </div>
+      )}
 
       <div className="control-buttons">
         {canStart && (

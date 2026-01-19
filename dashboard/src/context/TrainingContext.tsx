@@ -94,25 +94,48 @@ function trainingReducer(state: TrainingContextState, action: TrainingAction): T
     case 'SET_LOADING_MESSAGE':
       return { ...state, loadingMessage: action.payload };
 
-    case 'ADD_METRICS':
+    case 'ADD_METRICS': {
+      // Deduplicate by step - only add if this step doesn't exist
+      const existingIndex = state.metricsHistory.findIndex(m => m.step === action.payload.step);
+      let newHistory: MetricsDataPoint[];
+
+      if (existingIndex >= 0) {
+        // Update existing entry
+        newHistory = [...state.metricsHistory];
+        newHistory[existingIndex] = action.payload;
+      } else {
+        // Add new entry and keep sorted by step
+        newHistory = [...state.metricsHistory, action.payload].sort((a, b) => a.step - b.step);
+      }
+
+      // Only update displayed status if this is the latest step (avoid flashing from history replay)
+      const isLatestStep = action.payload.step >= state.status.current_step;
+
       return {
         ...state,
-        metricsHistory: [...state.metricsHistory, action.payload],
-        status: {
+        metricsHistory: newHistory,
+        status: isLatestStep ? {
           ...state.status,
           current_step: action.payload.step,
           current_epoch: action.payload.epoch,
           train_loss: action.payload.train_loss,
           tokens_seen: action.payload.tokens_seen,
           elapsed_time: action.payload.elapsed_time,
-        },
+        } : state.status,
       };
+    }
 
-    case 'ADD_GENERATION':
+    case 'ADD_GENERATION': {
+      // Deduplicate by step - only add if this step doesn't exist
+      const genExists = state.generations.some(g => g.step === action.payload.step);
+      if (genExists) {
+        return state;
+      }
       return {
         ...state,
-        generations: [...state.generations, action.payload],
+        generations: [...state.generations, action.payload].sort((a, b) => a.step - b.step),
       };
+    }
 
     case 'SET_CHECKPOINTS':
       return { ...state, checkpoints: action.payload };

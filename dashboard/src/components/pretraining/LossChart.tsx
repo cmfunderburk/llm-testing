@@ -2,6 +2,7 @@
  * Loss Curve Chart Component
  */
 
+import { useMemo } from 'react';
 import {
   LineChart,
   Line,
@@ -14,14 +15,38 @@ import {
 } from 'recharts';
 import { useTraining } from '../../context/TrainingContext';
 
+// Maximum points to render for performance
+const MAX_CHART_POINTS = 500;
+
+function downsampleData<T>(data: T[], maxPoints: number): T[] {
+  if (data.length <= maxPoints) return data;
+
+  const step = Math.ceil(data.length / maxPoints);
+  const sampled: T[] = [];
+
+  for (let i = 0; i < data.length; i += step) {
+    sampled.push(data[i]);
+  }
+
+  // Always include the last point for current state
+  if (sampled[sampled.length - 1] !== data[data.length - 1]) {
+    sampled.push(data[data.length - 1]);
+  }
+
+  return sampled;
+}
+
 export function LossChart() {
   const { metricsHistory } = useTraining();
 
-  const chartData = metricsHistory.map((m) => ({
-    step: m.step,
-    'Train Loss': m.train_loss,
-    'Val Loss': m.val_loss ?? null,
-  }));
+  const chartData = useMemo(() => {
+    const mapped = metricsHistory.map((m) => ({
+      step: m.step,
+      'Train Loss': m.train_loss,
+      'Val Loss': m.val_loss ?? null,
+    }));
+    return downsampleData(mapped, MAX_CHART_POINTS);
+  }, [metricsHistory]);
 
   if (chartData.length === 0) {
     return (

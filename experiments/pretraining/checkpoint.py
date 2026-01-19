@@ -29,12 +29,21 @@ from .config import GPTConfig, GPT_CONFIGS
 DEFAULT_CHECKPOINT_DIR = Path(__file__).parent.parent.parent / "outputs" / "pretraining"
 
 
-def get_checkpoint_dir(config_name: str, base_dir: Optional[Path] = None) -> Path:
+def get_checkpoint_dir(
+    config_name: str,
+    corpus: Optional[str] = None,
+    batch_size: Optional[int] = None,
+    context_length: Optional[int] = None,
+    base_dir: Optional[Path] = None,
+) -> Path:
     """
     Get the checkpoint directory for a given configuration.
 
     Args:
         config_name: Name of the model config ('nano', 'small', 'medium')
+        corpus: Corpus name (e.g., 'verdict', 'tinystories')
+        batch_size: Batch size used for training
+        context_length: Context length used for training
         base_dir: Optional base directory (default: outputs/pretraining/)
 
     Returns:
@@ -42,6 +51,13 @@ def get_checkpoint_dir(config_name: str, base_dir: Optional[Path] = None) -> Pat
     """
     if base_dir is None:
         base_dir = DEFAULT_CHECKPOINT_DIR
+
+    # If training params provided, use descriptive directory name
+    if corpus and batch_size and context_length:
+        dir_name = f"{config_name}_{corpus}_b{batch_size}_ctx{context_length}"
+        return base_dir / dir_name
+
+    # Legacy: just config_name
     return base_dir / config_name
 
 
@@ -57,6 +73,9 @@ def save_checkpoint(
     checkpoint_dir: Optional[Path] = None,
     filename: Optional[str] = None,
     save_optimizer: bool = True,
+    corpus: Optional[str] = None,
+    batch_size: Optional[int] = None,
+    context_length: Optional[int] = None,
 ) -> Path:
     """
     Save a training checkpoint.
@@ -82,12 +101,20 @@ def save_checkpoint(
         checkpoint_dir: Directory to save checkpoints
         filename: Custom filename (default: checkpoint_step_{step}.pt)
         save_optimizer: Whether to save optimizer state
+        corpus: Corpus name used for training
+        batch_size: Batch size used for training
+        context_length: Context length used for training
 
     Returns:
         Path to saved checkpoint file
     """
     if checkpoint_dir is None:
-        checkpoint_dir = get_checkpoint_dir(config_name)
+        checkpoint_dir = get_checkpoint_dir(
+            config_name,
+            corpus=corpus,
+            batch_size=batch_size,
+            context_length=context_length,
+        )
 
     # Create directory if it doesn't exist
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -108,6 +135,10 @@ def save_checkpoint(
         'train_loss': train_loss,
         'val_loss': val_loss,
         'timestamp': datetime.now().isoformat(),
+        # Training parameters for identification
+        'corpus': corpus,
+        'batch_size': batch_size,
+        'context_length': context_length,
     }
 
     # Optionally save optimizer state
@@ -178,6 +209,9 @@ def load_checkpoint(
         'train_loss': checkpoint.get('train_loss'),
         'val_loss': checkpoint.get('val_loss'),
         'timestamp': checkpoint.get('timestamp'),
+        'corpus': checkpoint.get('corpus'),
+        'batch_size': checkpoint.get('batch_size'),
+        'context_length': checkpoint.get('context_length'),
     }
 
     return model, optimizer, metadata
@@ -190,6 +224,9 @@ def list_checkpoints(
     """
     List all available checkpoints for a configuration.
 
+    Searches both legacy directories (just config_name) and new directories
+    (config_name_corpus_bN_ctxN format).
+
     Args:
         config_name: Name of model config
         checkpoint_dir: Optional checkpoint directory
@@ -197,27 +234,40 @@ def list_checkpoints(
     Returns:
         List of checkpoint info dictionaries, sorted by step
     """
-    if checkpoint_dir is None:
-        checkpoint_dir = get_checkpoint_dir(config_name)
+    base_dir = checkpoint_dir if checkpoint_dir else DEFAULT_CHECKPOINT_DIR
 
-    if not checkpoint_dir.exists():
+    if not base_dir.exists():
         return []
 
     checkpoints = []
-    for path in checkpoint_dir.glob("checkpoint_step_*.pt"):
-        try:
-            # Load just the metadata (not the full model)
-            checkpoint = torch.load(path, map_location='cpu', weights_only=False)
-            checkpoints.append({
-                'path': str(path),
-                'step': checkpoint.get('step', 0),
-                'epoch': checkpoint.get('epoch', 0),
-                'train_loss': checkpoint.get('train_loss'),
-                'val_loss': checkpoint.get('val_loss'),
-                'timestamp': checkpoint.get('timestamp'),
-            })
-        except Exception as e:
-            print(f"Warning: Could not load checkpoint {path}: {e}")
+
+    # Find all directories matching this config_name (both legacy and new format)
+    # Legacy: outputs/pretraining/nano/
+    # New: outputs/pretraining/nano_verdict_b4_ctx256/
+    for subdir in base_dir.iterdir():
+        if not subdir.is_dir():
+            continue
+        # Match if directory name starts with config_name (either exact or with _)
+        if subdir.name != config_name and not subdir.name.startswith(f"{config_name}_"):
+            continue
+
+        for path in subdir.glob("checkpoint_step_*.pt"):
+            try:
+                # Load just the metadata (not the full model)
+                checkpoint = torch.load(path, map_location='cpu', weights_only=False)
+                checkpoints.append({
+                    'path': str(path),
+                    'step': checkpoint.get('step', 0),
+                    'epoch': checkpoint.get('epoch', 0),
+                    'train_loss': checkpoint.get('train_loss'),
+                    'val_loss': checkpoint.get('val_loss'),
+                    'timestamp': checkpoint.get('timestamp'),
+                    'corpus': checkpoint.get('corpus'),
+                    'batch_size': checkpoint.get('batch_size'),
+                    'context_length': checkpoint.get('context_length'),
+                })
+            except Exception as e:
+                print(f"Warning: Could not load checkpoint {path}: {e}")
 
     # Sort by step
     checkpoints.sort(key=lambda x: x['step'])
@@ -231,21 +281,16 @@ def get_latest_checkpoint(
     """
     Get path to the latest checkpoint for a configuration.
 
+    Searches across all checkpoint directories for this config_name.
+
     Args:
         config_name: Name of model config
-        checkpoint_dir: Optional checkpoint directory
+        checkpoint_dir: Optional base checkpoint directory
 
     Returns:
         Path to latest checkpoint, or None if no checkpoints exist
     """
-    if checkpoint_dir is None:
-        checkpoint_dir = get_checkpoint_dir(config_name)
-
-    latest_path = checkpoint_dir / "checkpoint_latest.pt"
-    if latest_path.exists():
-        return str(latest_path)
-
-    # Fall back to finding the highest step checkpoint
+    # Use list_checkpoints which now searches all matching directories
     checkpoints = list_checkpoints(config_name, checkpoint_dir)
     if checkpoints:
         return checkpoints[-1]['path']
