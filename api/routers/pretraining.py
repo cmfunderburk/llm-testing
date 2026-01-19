@@ -253,6 +253,27 @@ class TrainingManager:
                         self.metrics_history.append(metrics)
                         await self.broadcast_metrics(metrics)
 
+                    # Generate sample every 2000 steps for progress visibility
+                    if global_step % 2000 == 0 and global_step > 0:
+                        model.eval()
+                        sample = generate_text(
+                            model=model,
+                            tokenizer=tokenizer,
+                            prompt="Once upon a time",
+                            max_new_tokens=50,
+                            temperature=0.8,
+                            device=device,
+                        )
+                        model.train()
+
+                        generation_msg = {
+                            "type": "generation",
+                            "step": global_step,
+                            "epoch": epoch + 1,
+                            "text": sample[:300],
+                        }
+                        await self.broadcast_metrics(generation_msg)
+
                     await asyncio.sleep(0)
 
                 model.eval()

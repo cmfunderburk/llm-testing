@@ -7,6 +7,13 @@ import { useTraining } from '../../context/TrainingContext';
 import type { TrainingConfig } from '../../types';
 import { MODEL_CONFIGS, CORPORA } from '../../types';
 
+// Model config display names with parameter counts
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  nano: 'nano (~10M)',
+  small: 'small (~50M)',
+  medium: 'medium (~124M)',
+};
+
 export function TrainingControls() {
   const { status, isLoading, startTraining, pauseTraining, resumeTraining, stopTraining } = useTraining();
 
@@ -42,7 +49,7 @@ export function TrainingControls() {
             disabled={!canStart}
           >
             {MODEL_CONFIGS.map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <option key={c} value={c}>{MODEL_DISPLAY_NAMES[c] || c}</option>
             ))}
           </select>
         </div>
