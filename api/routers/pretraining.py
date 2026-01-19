@@ -134,19 +134,55 @@ class TrainingManager:
         import time
 
         try:
+            # Send loading status updates
+            await self.broadcast_metrics({
+                "type": "status",
+                "state": "loading",
+                "message": "Initializing...",
+            })
+
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             model_config = get_config(config.config_name)
             tokenizer = Tokenizer()
 
-            train_loader, val_loader = create_train_val_dataloaders(
-                corpus=config.corpus,
-                batch_size=config.batch_size,
-                context_length=model_config.context_length,
-                tokenizer=tokenizer,
+            await self.broadcast_metrics({
+                "type": "status",
+                "state": "loading",
+                "message": f"Loading corpus '{config.corpus}'... (this may take a minute for large datasets)",
+            })
+
+            # Run blocking data loading in thread pool to not block the event loop
+            loop = asyncio.get_event_loop()
+            train_loader, val_loader = await loop.run_in_executor(
+                None,
+                lambda: create_train_val_dataloaders(
+                    corpus=config.corpus,
+                    batch_size=config.batch_size,
+                    context_length=model_config.context_length,
+                    tokenizer=tokenizer,
+                )
             )
 
-            model = GPTModel(model_config)
-            model.to(device)
+            await self.broadcast_metrics({
+                "type": "status",
+                "state": "loading",
+                "message": f"Creating {config.config_name} model...",
+            })
+
+            # Run model creation in thread pool as well
+            def create_model():
+                m = GPTModel(model_config)
+                m.to(device)
+                return m
+
+            model = await loop.run_in_executor(None, create_model)
+
+            await self.broadcast_metrics({
+                "type": "status",
+                "state": "loading",
+                "message": "Model ready. Starting training...",
+            })
+            await asyncio.sleep(0)
 
             optimizer = torch.optim.AdamW(
                 model.parameters(),

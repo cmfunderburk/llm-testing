@@ -30,6 +30,7 @@ interface TrainingContextState {
   isConnected: boolean;
   connectionError: string | null;
   status: TrainingStatus;
+  loadingMessage: string | null;  // Message shown during initialization
   metricsHistory: MetricsDataPoint[];
   generations: { step: number; epoch: number; text: string }[];
   checkpoints: CheckpointInfo[];
@@ -45,6 +46,7 @@ type TrainingAction =
   | { type: 'SET_CONNECTED'; payload: boolean }
   | { type: 'SET_CONNECTION_ERROR'; payload: string | null }
   | { type: 'SET_STATUS'; payload: TrainingStatus }
+  | { type: 'SET_LOADING_MESSAGE'; payload: string | null }
   | { type: 'ADD_METRICS'; payload: MetricsDataPoint }
   | { type: 'ADD_GENERATION'; payload: { step: number; epoch: number; text: string } }
   | { type: 'SET_CHECKPOINTS'; payload: CheckpointInfo[] }
@@ -70,6 +72,7 @@ const initialState: TrainingContextState = {
     elapsed_time: 0,
     config: null,
   },
+  loadingMessage: null,
   metricsHistory: [],
   generations: [],
   checkpoints: [],
@@ -87,6 +90,9 @@ function trainingReducer(state: TrainingContextState, action: TrainingAction): T
 
     case 'SET_STATUS':
       return { ...state, status: action.payload };
+
+    case 'SET_LOADING_MESSAGE':
+      return { ...state, loadingMessage: action.payload };
 
     case 'ADD_METRICS':
       return {
@@ -211,6 +217,12 @@ export function TrainingProvider({ children }: TrainingProviderProps) {
               state: data.state,
             },
           });
+          // Handle loading message
+          if (data.state === 'loading' && data.message) {
+            dispatch({ type: 'SET_LOADING_MESSAGE', payload: data.message });
+          } else if (data.state === 'running') {
+            dispatch({ type: 'SET_LOADING_MESSAGE', payload: null });
+          }
         }
         break;
 
