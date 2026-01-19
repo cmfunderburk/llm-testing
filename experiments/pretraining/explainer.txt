@@ -1,0 +1,180 @@
+
+ ▐▛███▜▌   Claude Code v2.1.6
+▝▜█████▛▘  Opus 4.5 · Claude Max
+  ▘▘ ▝▝    ~/Work/llm-testing
+
+❯ Walk me through how to use the @experiments/pretraining/ implementation 
+  ⎿  Listed directory experiments/pretraining/
+
+● I'll explore the pretraining implementation to give you a walkthrough.
+
+● Read(experiments/pretraining/START-RALPH-LOOP.md)
+  ⎿  Read 232 lines
+
+● Read(experiments/pretraining/config.py)
+  ⎿  Read 219 lines
+
+● Read(experiments/pretraining/train.py)
+  ⎿  Read 650 lines
+
+● Let me read a few more key files to complete the walkthrough.
+
+● Read(experiments/pretraining/model.py)
+  ⎿  Read 623 lines
+
+● Read(experiments/pretraining/generate.py)
+  ⎿  Read 347 lines
+
+● Bash(ls /home/cmf/Work/llm-testing/experiments/pretraining/api/)
+  ⎿  __init__.py
+     main.py
+     __pycache__
+     routes
+
+● Here's a complete walkthrough of the experiments/pretraining/ implementation:
+
+  Overview
+
+  This is a from-scratch GPT pretraining lab with a full stack: model, training pipeline, API backend, and React dashboard. It's designed for learning, following Raschka's "Build a Large Language Model" book.
+
+  ---
+  Core Components
+
+  1. Model Configurations (config.py)
+
+  Three preset sizes:
+  - nano (~10M params): emb_dim=256, n_layers=6, context_length=256 — for quick testing
+  - small (~50M params): emb_dim=512, n_layers=8, context_length=512
+  - medium (~124M params): emb_dim=768, n_layers=12, context_length=1024 — matches GPT-2 small
+
+  2. GPT Model (model.py)
+
+  Full transformer decoder with educational comments:
+  - LayerNorm, GELU, FeedForward building blocks
+  - MultiHeadAttention with causal masking
+  - TransformerBlock (pre-LayerNorm variant)
+  - GPTModel — complete architecture
+
+  3. Training (train.py)
+
+  Training loop with cosine LR schedule and gradient clipping.
+
+  ---
+  Quick Start
+
+  # Activate environment
+  source .venv/bin/activate
+
+  # Install dependencies
+  pip install torch fastapi uvicorn websockets tiktoken pyyaml
+
+  # Train a nano model on the "verdict" corpus (quick test)
+  python -m experiments.pretraining.train --config nano --epochs 5 --corpus verdict
+
+  # With checkpoint saving enabled
+  python -m experiments.pretraining.train --config nano --epochs 10 --corpus verdict --save
+
+  CLI Options
+  ┌──────────────┬───────────────────────────────────────────┐
+  │     Flag     │                Description                │
+  ├──────────────┼───────────────────────────────────────────┤
+  │ --config     │ Model size: nano, small, medium           │
+  ├──────────────┼───────────────────────────────────────────┤
+  │ --epochs     │ Training epochs                           │
+  ├──────────────┼───────────────────────────────────────────┤
+  │ --batch-size │ Batch size (default: 4)                   │
+  ├──────────────┼───────────────────────────────────────────┤
+  │ --lr         │ Learning rate (default: 3e-4)             │
+  ├──────────────┼───────────────────────────────────────────┤
+  │ --corpus     │ Training corpus name                      │
+  ├──────────────┼───────────────────────────────────────────┤
+  │ --save       │ Enable checkpoint saving (OFF by default) │
+  ├──────────────┼───────────────────────────────────────────┤
+  │ --resume     │ Resume from checkpoint path               │
+  ├──────────────┼───────────────────────────────────────────┤
+  │ --eval-freq  │ Evaluate every N steps                    │
+  └──────────────┴───────────────────────────────────────────┘
+  ---
+  Text Generation
+
+  After training:
+  python -m experiments.pretraining.generate \
+      --checkpoint outputs/pretraining/checkpoint_final.pt \
+      --prompt "Once upon a time" \
+      --temperature 0.8 \
+      --top-k 40 \
+      --max-tokens 100
+
+  ---
+  Web Dashboard (API + Frontend)
+
+  Start the API Server
+
+  python -m experiments.pretraining.api.main
+  # Runs at http://localhost:8000
+
+  Start the Frontend
+
+  cd experiments/pretraining/frontend
+  npm install
+  npm run dev
+  # Runs at http://localhost:3000
+
+  The dashboard provides:
+  - Real-time loss curves via WebSocket
+  - Training controls (start/stop/pause)
+  - Checkpoint browser
+  - Interactive text generation
+  - Attention/activation visualizations
+
+  ---
+  Architecture Diagram
+
+  ┌─────────────────────────────────────────────────────────┐
+  │                    Frontend (React)                     │
+  │  - Dashboard with D3/Recharts visualizations            │
+  │  - WebSocket for real-time training metrics             │
+  └────────────────────────┬────────────────────────────────┘
+                           │ HTTP + WebSocket
+  ┌────────────────────────▼────────────────────────────────┐
+  │                   API (FastAPI)                         │
+  │  - /api/health, /api/train, /api/generate               │
+  │  - WebSocket streaming for live metrics                 │
+  └────────────────────────┬────────────────────────────────┘
+                           │
+  ┌────────────────────────▼────────────────────────────────┐
+  │               Training Infrastructure                    │
+  │  train.py → model.py → checkpoint.py → generate.py      │
+  │  ├── GPTModel (transformer decoder)                     │
+  │  ├── Tokenizer (tiktoken BPE)                           │
+  │  └── DataLoader (corpus → batches)                      │
+  └─────────────────────────────────────────────────────────┘
+
+  ---
+  Verification Commands
+
+  # Test model loads
+  python -c "from experiments.pretraining.model import GPTModel; print('Model OK')"
+
+  # Test tokenizer
+  python -c "from experiments.pretraining.tokenizer import Tokenizer; t = Tokenizer(); print(t.decode(t.encode('test')))"
+
+  # Test data pipeline
+  python -c "from experiments.pretraining.data import get_dataloader; print('Data OK')"
+
+  # Check API
+  curl http://localhost:8000/api/health
+
+  ---
+  Key Design Decisions
+
+  1. Checkpoints OFF by default — prevents disk clutter during experimentation
+  2. Educational comments — model code explains why, not just what
+  3. Pre-LayerNorm variant — more stable training than post-norm
+  4. Cosine LR with warmup — standard transformer training recipe
+  5. Gradient clipping at 1.0 — prevents exploding gradients
+
+✻ Cogitated for 41s
+
+
+
