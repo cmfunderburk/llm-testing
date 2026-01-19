@@ -28,6 +28,7 @@ class TrainingConfig(BaseModel):
     warmup_steps: int = 100
     save_checkpoints: bool = False
     context_length: Optional[int] = None  # Optional override for model's default
+    resume_from: Optional[str] = None  # checkpoint_id to resume from
 
 
 class TrainingStatus(BaseModel):
@@ -97,6 +98,12 @@ class VRAMEstimate(BaseModel):
     warning: Optional[str] = None
 
 
+class SaveNowResponse(BaseModel):
+    success: bool
+    message: str
+    step: int
+
+
 # =============================================================================
 # Training Manager
 # =============================================================================
@@ -109,8 +116,16 @@ class TrainingManager:
         self.training_task: Optional[asyncio.Task] = None
         self.should_stop = False
         self.should_pause = False
+        self.should_save_now = False  # Flag for manual checkpoint save
         self.websocket_clients: List[WebSocket] = []
         self.metrics_history: List[Dict[str, Any]] = []
+        # Current training state for save-now endpoint
+        self._model = None
+        self._optimizer = None
+        self._model_config = None
+        self._training_config: Optional[TrainingConfig] = None
+        self._current_epoch = 0
+        self._effective_context_length = 0
 
     async def broadcast_metrics(self, metrics: Dict[str, Any]):
         """Send metrics to all connected WebSocket clients."""
@@ -140,11 +155,13 @@ class TrainingManager:
 
         self.should_stop = False
         self.should_pause = False
+        self.should_save_now = False
         self.status = TrainingStatus(
             state="loading",  # Start in loading state until training loop begins
             config=config,
         )
         self.metrics_history = []
+        self._training_config = config
 
         self.training_task = asyncio.create_task(self._run_training(config))
 
@@ -157,7 +174,7 @@ class TrainingManager:
         from experiments.pretraining.data import create_train_val_dataloaders
         from experiments.pretraining.train import calc_loss_batch, get_lr_scheduler
         from experiments.pretraining.generate import generate_text
-        from experiments.pretraining.checkpoint import save_checkpoint
+        from experiments.pretraining.checkpoint import save_checkpoint, load_checkpoint, list_checkpoints
         import time
 
         try:
@@ -172,14 +189,90 @@ class TrainingManager:
             model_config = get_config(config.config_name)
             tokenizer = Tokenizer()
 
+            # Use provided context_length or fall back to model default
+            effective_context_length = config.context_length if config.context_length else model_config.context_length
+            self._effective_context_length = effective_context_length
+
+            # Handle resume from checkpoint
+            start_step = 0
+            start_epoch = 0
+            resumed_optimizer_state = None
+
+            if config.resume_from:
+                await self.broadcast_metrics({
+                    "type": "status",
+                    "state": "loading",
+                    "message": f"Loading checkpoint {config.resume_from}...",
+                })
+
+                # Parse checkpoint_id to find the checkpoint path
+                checkpoint_config_name, checkpoint_step = _parse_checkpoint_id(config.resume_from)
+                checkpoints = list_checkpoints(checkpoint_config_name)
+                checkpoint_path = None
+                checkpoint_metadata = None
+
+                for ckpt in checkpoints:
+                    if ckpt['step'] == checkpoint_step:
+                        checkpoint_path = ckpt['path']
+                        checkpoint_metadata = ckpt
+                        break
+
+                if not checkpoint_path:
+                    raise ValueError(f"Checkpoint not found: {config.resume_from}")
+
+                # Load the checkpoint
+                model, _, metadata = load_checkpoint(checkpoint_path, device=device)
+
+                # Store optimizer state to load after optimizer creation
+                ckpt_data = torch.load(checkpoint_path, map_location=device, weights_only=False)
+                if 'optimizer_state_dict' in ckpt_data:
+                    resumed_optimizer_state = ckpt_data['optimizer_state_dict']
+
+                start_step = metadata.get('step', 0)
+                start_epoch = metadata.get('epoch', 0)
+
+                # Warn if training params differ
+                warnings = []
+                if checkpoint_metadata:
+                    if checkpoint_metadata.get('corpus') and checkpoint_metadata['corpus'] != config.corpus:
+                        warnings.append(f"corpus: {checkpoint_metadata['corpus']} → {config.corpus}")
+                    if checkpoint_metadata.get('batch_size') and checkpoint_metadata['batch_size'] != config.batch_size:
+                        warnings.append(f"batch_size: {checkpoint_metadata['batch_size']} → {config.batch_size}")
+                    if checkpoint_metadata.get('context_length') and checkpoint_metadata['context_length'] != effective_context_length:
+                        warnings.append(f"context_length: {checkpoint_metadata['context_length']} → {effective_context_length}")
+
+                if warnings:
+                    await self.broadcast_metrics({
+                        "type": "warning",
+                        "message": f"Config differs from checkpoint: {', '.join(warnings)}",
+                    })
+
+                await self.broadcast_metrics({
+                    "type": "status",
+                    "state": "loading",
+                    "message": f"Resumed from step {start_step}, epoch {start_epoch}",
+                })
+            else:
+                # Create fresh model
+                await self.broadcast_metrics({
+                    "type": "status",
+                    "state": "loading",
+                    "message": f"Creating {config.config_name} model...",
+                })
+
+                loop = asyncio.get_event_loop()
+                def create_model():
+                    m = GPTModel(model_config)
+                    m.to(device)
+                    return m
+
+                model = await loop.run_in_executor(None, create_model)
+
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "loading",
                 "message": f"Loading corpus '{config.corpus}'... (this may take a minute for large datasets)",
             })
-
-            # Use provided context_length or fall back to model default
-            effective_context_length = config.context_length if config.context_length else model_config.context_length
 
             # Run blocking data loading in thread pool to not block the event loop
             loop = asyncio.get_event_loop()
@@ -196,20 +289,6 @@ class TrainingManager:
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "loading",
-                "message": f"Creating {config.config_name} model...",
-            })
-
-            # Run model creation in thread pool as well
-            def create_model():
-                m = GPTModel(model_config)
-                m.to(device)
-                return m
-
-            model = await loop.run_in_executor(None, create_model)
-
-            await self.broadcast_metrics({
-                "type": "status",
-                "state": "loading",
                 "message": "Model ready. Starting training...",
             })
 
@@ -219,12 +298,37 @@ class TrainingManager:
                 weight_decay=0.1,
             )
 
+            # Restore optimizer state if resuming
+            if resumed_optimizer_state is not None:
+                optimizer.load_state_dict(resumed_optimizer_state)
+                # Update learning rate to new config value (in case user changed it)
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = config.learning_rate
+
             total_steps = len(train_loader) * config.epochs
             scheduler = get_lr_scheduler(optimizer, config.warmup_steps, total_steps)
 
+            # If resuming, advance scheduler to current step
+            if start_step > 0:
+                for _ in range(start_step):
+                    scheduler.step()
+
             self.status.total_steps = total_steps
 
-            global_step = 0
+            # Store references for save-now endpoint
+            self._model = model
+            self._optimizer = optimizer
+            self._model_config = model_config
+
+            # Calculate checkpoint steps at 25%, 50%, 75% of training
+            # (100% is handled by final checkpoint save)
+            checkpoint_percentages = [0.25, 0.50, 0.75]
+            checkpoint_steps = set(int(total_steps * pct) for pct in checkpoint_percentages)
+            # Remove 0 in case total_steps is very small
+            checkpoint_steps.discard(0)
+            saved_checkpoints = set()
+
+            global_step = start_step
             tokens_seen = 0
             start_time = time.time()
 
@@ -233,13 +337,29 @@ class TrainingManager:
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "running",
+                "resumed_from_step": start_step if start_step > 0 else None,
             })
 
             model.train()
             for epoch in range(config.epochs):
-                self.status.current_epoch = epoch + 1
+                # Skip epochs that were completed before resume
+                if epoch < start_epoch:
+                    continue
 
+                self.status.current_epoch = epoch + 1
+                self._current_epoch = epoch + 1
+
+                steps_in_epoch = 0
                 for batch in train_loader:
+                    # If resuming mid-epoch, skip batches until we reach start_step
+                    if config.resume_from and epoch == start_epoch:
+                        steps_in_epoch += 1
+                        # Calculate which batch we should resume from
+                        batches_per_epoch = len(train_loader)
+                        start_batch_in_epoch = start_step - (start_epoch * batches_per_epoch)
+                        if steps_in_epoch <= start_batch_in_epoch:
+                            continue
+
                     if self.should_stop:
                         self.status.state = "completed"
                         return
@@ -249,6 +369,31 @@ class TrainingManager:
                         if self.should_stop:
                             self.status.state = "completed"
                             return
+
+                    # Handle manual checkpoint save
+                    if self.should_save_now:
+                        self.should_save_now = False
+                        manual_path = save_checkpoint(
+                            model=model,
+                            optimizer=optimizer,
+                            config=model_config,
+                            config_name=config.config_name,
+                            step=global_step,
+                            epoch=epoch + 1,
+                            train_loss=self.status.train_loss,
+                            val_loss=self.status.val_loss,
+                            filename=f"checkpoint_manual_{global_step:06d}.pt",
+                            corpus=config.corpus,
+                            batch_size=config.batch_size,
+                            context_length=effective_context_length,
+                        )
+                        await self.broadcast_metrics({
+                            "type": "checkpoint",
+                            "step": global_step,
+                            "epoch": epoch + 1,
+                            "path": str(manual_path),
+                            "manual": True,
+                        })
 
                     input_ids = batch['input_ids']
                     labels = batch['labels']
@@ -304,6 +449,31 @@ class TrainingManager:
                         }
                         await self.broadcast_metrics(generation_msg)
 
+                    # Save checkpoint at 25%, 50%, 75% milestones (if enabled)
+                    if config.save_checkpoints and global_step in checkpoint_steps and global_step not in saved_checkpoints:
+                        saved_checkpoints.add(global_step)
+                        pct = int(100 * global_step / total_steps)
+                        checkpoint_path = save_checkpoint(
+                            model=model,
+                            optimizer=optimizer,
+                            config=model_config,
+                            config_name=config.config_name,
+                            step=global_step,
+                            epoch=epoch + 1,
+                            train_loss=self.status.train_loss,
+                            val_loss=self.status.val_loss,
+                            corpus=config.corpus,
+                            batch_size=config.batch_size,
+                            context_length=effective_context_length,
+                        )
+                        await self.broadcast_metrics({
+                            "type": "checkpoint",
+                            "step": global_step,
+                            "epoch": epoch + 1,
+                            "path": str(checkpoint_path),
+                            "percentage": pct,
+                        })
+
                     await asyncio.sleep(0)
 
                 model.eval()
@@ -325,29 +495,7 @@ class TrainingManager:
                 }
                 await self.broadcast_metrics(generation_msg)
 
-                # Save checkpoint at end of each epoch (if enabled)
-                if config.save_checkpoints:
-                    checkpoint_path = save_checkpoint(
-                        model=model,
-                        optimizer=optimizer,
-                        config=model_config,
-                        config_name=config.config_name,
-                        step=global_step,
-                        epoch=epoch + 1,
-                        train_loss=self.status.train_loss,
-                        val_loss=self.status.val_loss,
-                        corpus=config.corpus,
-                        batch_size=config.batch_size,
-                        context_length=effective_context_length,
-                    )
-                    await self.broadcast_metrics({
-                        "type": "checkpoint",
-                        "step": global_step,
-                        "epoch": epoch + 1,
-                        "path": str(checkpoint_path),
-                    })
-
-            # Always save final model on completion
+            # Always save final model on completion (100% checkpoint)
             final_checkpoint_path = save_checkpoint(
                 model=model,
                 optimizer=optimizer,
@@ -379,6 +527,10 @@ class TrainingManager:
                 "message": str(e),
             })
         finally:
+            # Clean up references
+            self._model = None
+            self._optimizer = None
+            self._model_config = None
             # Clean up GPU memory
             import gc
             gc.collect()
@@ -408,6 +560,12 @@ class TrainingManager:
         self.should_stop = True
         self.should_pause = False
         self.status.state = "completed"
+
+    def trigger_save_now(self):
+        """Trigger immediate checkpoint save."""
+        if self.status.state != "running":
+            raise HTTPException(status_code=400, detail="Training not running")
+        self.should_save_now = True
 
 
 # Global training manager instance
@@ -484,6 +642,17 @@ async def stop_training():
     """Stop the current training run."""
     training_manager.stop_training()
     return training_manager.status
+
+
+@router.post("/checkpoint/save-now", response_model=SaveNowResponse)
+async def save_checkpoint_now():
+    """Trigger immediate checkpoint save during active training."""
+    training_manager.trigger_save_now()
+    return SaveNowResponse(
+        success=True,
+        message="Checkpoint save requested. Will be saved at next training step.",
+        step=training_manager.status.current_step,
+    )
 
 
 @router.get("/checkpoints", response_model=List[CheckpointInfo])
@@ -578,6 +747,88 @@ async def get_checkpoint(checkpoint_id: str):
             )
 
     raise HTTPException(status_code=404, detail="Checkpoint not found")
+
+
+class DeleteCheckpointsRequest(BaseModel):
+    config_name: str = "nano"
+    keep_latest: bool = True  # Keep checkpoint_latest.pt and checkpoint_final.pt
+
+
+class DeleteCheckpointsResponse(BaseModel):
+    deleted_count: int
+    deleted_files: List[str]
+
+
+@router.delete("/checkpoints", response_model=DeleteCheckpointsResponse)
+async def delete_checkpoints(config_name: str = "nano", keep_latest: bool = True):
+    """
+    Delete checkpoints for a given configuration.
+
+    Args:
+        config_name: Name of model config ('nano', 'small', 'medium')
+        keep_latest: If True, keeps checkpoint_latest.pt and checkpoint_final.pt
+    """
+    from pathlib import Path
+    from experiments.pretraining.checkpoint import DEFAULT_CHECKPOINT_DIR
+
+    base_dir = DEFAULT_CHECKPOINT_DIR
+    if not base_dir.exists():
+        return DeleteCheckpointsResponse(deleted_count=0, deleted_files=[])
+
+    deleted_files = []
+
+    # Find all directories matching this config_name
+    for subdir in base_dir.iterdir():
+        if not subdir.is_dir():
+            continue
+        if subdir.name != config_name and not subdir.name.startswith(f"{config_name}_"):
+            continue
+
+        # Delete checkpoint files in this directory
+        for checkpoint_file in subdir.glob("checkpoint_*.pt"):
+            filename = checkpoint_file.name
+            # Skip latest/final if keep_latest is True
+            if keep_latest and filename in ("checkpoint_latest.pt", "checkpoint_final.pt"):
+                continue
+
+            checkpoint_file.unlink()
+            deleted_files.append(str(checkpoint_file))
+
+        # If directory is now empty (or only has latest/final), optionally clean up
+        remaining = list(subdir.glob("*.pt"))
+        if not remaining:
+            subdir.rmdir()
+
+    return DeleteCheckpointsResponse(
+        deleted_count=len(deleted_files),
+        deleted_files=deleted_files,
+    )
+
+
+@router.delete("/checkpoints/all", response_model=DeleteCheckpointsResponse)
+async def delete_all_checkpoints():
+    """Delete ALL checkpoints across all configurations."""
+    from pathlib import Path
+    import shutil
+    from experiments.pretraining.checkpoint import DEFAULT_CHECKPOINT_DIR
+
+    base_dir = DEFAULT_CHECKPOINT_DIR
+    if not base_dir.exists():
+        return DeleteCheckpointsResponse(deleted_count=0, deleted_files=[])
+
+    deleted_files = []
+
+    # Count files before deletion
+    for pt_file in base_dir.rglob("*.pt"):
+        deleted_files.append(str(pt_file))
+
+    # Remove the entire pretraining outputs directory
+    shutil.rmtree(base_dir)
+
+    return DeleteCheckpointsResponse(
+        deleted_count=len(deleted_files),
+        deleted_files=deleted_files,
+    )
 
 
 @router.post("/generate", response_model=GenerateResponse)
