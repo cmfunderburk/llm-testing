@@ -100,3 +100,58 @@ Experiments save outputs to `outputs/<experiment_name>/`:
 - `docs/concepts/` - Self-assessment documents for each track
 - `docs/papers/` - Paper annotations (e.g., bayesian-geometry-attention.md)
 - `ralph/` - Design principles for autonomous iteration loops
+
+## Dashboard
+
+The unified dashboard provides a web UI for interactive experimentation across all learning tracks.
+
+### Running the Dashboard
+
+```bash
+# Quick start (runs both API and frontend)
+./run-dashboard.sh
+
+# Or manually in separate terminals:
+# Terminal 1: Start the API server
+source .venv/bin/activate
+uvicorn api.main:app --reload --port 8000
+
+# Terminal 2: Start the frontend
+cd dashboard && npm install && npm run dev
+```
+
+Dashboard URL: http://localhost:5173
+API docs: http://localhost:8000/docs
+
+### Dashboard Architecture
+
+```
+api/                        # Unified FastAPI backend
+├── main.py                 # Application entry, mounts routers
+├── config.py               # Server configuration
+├── routers/
+│   ├── pretraining.py      # GPT pretraining endpoints + WebSocket
+│   ├── attention.py        # Attention extraction endpoints
+│   └── probing.py          # Activation extraction endpoints
+└── services/
+    └── model_manager.py    # Lazy model loading for GPU memory
+
+dashboard/                  # React + TypeScript frontend
+├── src/
+│   ├── pages/              # Track pages (Pretraining, Attention, Probing)
+│   ├── components/
+│   │   ├── layout/         # Header, Sidebar, Layout
+│   │   ├── pretraining/    # Training controls, charts, metrics
+│   │   ├── attention/      # Heatmap visualization
+│   │   └── probing/        # Activation statistics
+│   ├── context/            # TrainingContext for state management
+│   └── hooks/              # useWebSocket for real-time metrics
+```
+
+### API Endpoints
+
+- `GET /api/health` - Health check
+- `POST /api/pretraining/start` - Start GPT training
+- `POST /api/attention/extract` - Extract attention weights
+- `POST /api/probing/extract` - Extract layer activations
+- `WS /ws/training` - Real-time training metrics stream
