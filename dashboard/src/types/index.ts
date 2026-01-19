@@ -12,7 +12,7 @@ export type Track = 'pretraining' | 'attention' | 'probing';
 // Pretraining Types
 // =============================================================================
 
-export type TrainingState = 'idle' | 'running' | 'paused' | 'completed' | 'error';
+export type TrainingState = 'idle' | 'loading' | 'running' | 'paused' | 'completed' | 'error';
 
 export interface TrainingConfig {
   config_name: string;
@@ -47,7 +47,7 @@ export interface TrainingMetrics {
   tokens_per_sec?: number;
   elapsed_time?: number;
   text?: string;
-  message?: string;
+  message?: string;  // Loading/error messages
   state?: TrainingState;
 }
 

@@ -5,7 +5,7 @@
 import { useTraining } from '../../context/TrainingContext';
 
 export function ProgressIndicators() {
-  const { status } = useTraining();
+  const { status, loadingMessage } = useTraining();
 
   const stepProgress =
     status.total_steps > 0 ? (status.current_step / status.total_steps) * 100 : 0;
@@ -40,6 +40,13 @@ export function ProgressIndicators() {
   return (
     <div className="progress-indicators">
       <h3>Training Progress</h3>
+
+      {status.state === 'loading' && loadingMessage && (
+        <div className="loading-message">
+          <div className="loading-spinner" />
+          <span>{loadingMessage}</span>
+        </div>
+      )}
 
       <div className="progress-section">
         <div className="progress-header">
