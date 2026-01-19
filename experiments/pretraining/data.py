@@ -185,11 +185,12 @@ class TextFileDataset(Dataset):
 
 
 # =============================================================================
-# Corpus Registry
+# Corpus Registry and Caching
 # =============================================================================
 
 # Directory where corpus files are stored
 CORPUS_DIR = Path(__file__).parent / "corpus"
+CACHE_DIR = CORPUS_DIR / ".cache"
 
 # Registry of available corpora
 # Built-in (small, for testing):
@@ -206,6 +207,59 @@ CORPUS_REGISTRY = {
     'wikitext2': 'wikitext2.txt',
     'shakespeare': 'shakespeare.txt',
 }
+
+
+def get_cache_path(corpus_name: str, encoding_name: str = "gpt2") -> Path:
+    """Get the cache file path for a tokenized corpus."""
+    # Normalize corpus name for cache key
+    safe_name = Path(corpus_name).stem if os.path.exists(corpus_name) else corpus_name
+    return CACHE_DIR / f"{safe_name}.{encoding_name}.tokens.pt"
+
+
+def load_cached_tokens(corpus_path: Path, encoding_name: str = "gpt2") -> Optional[List[int]]:
+    """
+    Load cached tokenized corpus if available and valid.
+
+    Returns None if cache doesn't exist or is stale (corpus file was modified).
+    """
+    import torch
+
+    corpus_name = corpus_path.stem
+    cache_path = get_cache_path(corpus_name, encoding_name)
+
+    if not cache_path.exists():
+        return None
+
+    # Check if cache is stale (corpus modified after cache was created)
+    corpus_mtime = corpus_path.stat().st_mtime
+    cache_mtime = cache_path.stat().st_mtime
+
+    if corpus_mtime > cache_mtime:
+        print(f"Cache stale for {corpus_name}, will re-tokenize")
+        return None
+
+    try:
+        token_ids = torch.load(cache_path, weights_only=True).tolist()
+        print(f"Loaded {len(token_ids):,} tokens from cache for {corpus_name}")
+        return token_ids
+    except Exception as e:
+        print(f"Failed to load cache: {e}")
+        return None
+
+
+def save_cached_tokens(corpus_name: str, token_ids: List[int], encoding_name: str = "gpt2"):
+    """Save tokenized corpus to cache."""
+    import torch
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = get_cache_path(corpus_name, encoding_name)
+
+    # Save as tensor for efficient storage
+    token_tensor = torch.tensor(token_ids, dtype=torch.int32)
+    torch.save(token_tensor, cache_path)
+
+    size_mb = cache_path.stat().st_size / (1024 * 1024)
+    print(f"Saved {len(token_ids):,} tokens to cache ({size_mb:.1f} MB)")
 
 
 def get_corpus_path(corpus_name: str) -> Path:
@@ -349,12 +403,22 @@ def create_train_val_dataloaders(
         tokenizer = Tokenizer()
 
     corpus_path = get_corpus_path(corpus)
+    encoding_name = getattr(tokenizer, 'encoding_name', 'gpt2')
 
-    # Load and tokenize the full text
-    with open(corpus_path, 'r', encoding='utf-8') as f:
-        text = f.read()
+    # Try to load from cache first
+    token_ids = load_cached_tokens(corpus_path, encoding_name)
 
-    token_ids = tokenizer.encode(text)
+    if token_ids is None:
+        # Cache miss - load and tokenize the full text
+        print(f"Tokenizing {corpus_path.name}...")
+        with open(corpus_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+
+        token_ids = tokenizer.encode(text)
+        print(f"Tokenized into {len(token_ids):,} tokens")
+
+        # Save to cache for next time
+        save_cached_tokens(corpus_path.stem, token_ids, encoding_name)
 
     # Split into train and validation
     split_idx = int(len(token_ids) * (1 - val_split))
