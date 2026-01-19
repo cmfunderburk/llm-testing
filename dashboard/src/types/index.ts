@@ -80,7 +80,11 @@ export interface GenerateResponse {
 export const MODEL_CONFIGS = ['nano', 'small', 'medium'] as const;
 export type ModelConfig = typeof MODEL_CONFIGS[number];
 
-export const CORPORA = ['verdict', 'tiny'] as const;
+// Corpora available for pretraining
+// Built-in: verdict, tiny (small, for testing)
+// Downloadable: tinystories, wikitext2, shakespeare
+// Run: python -m experiments.pretraining.download_corpora --all
+export const CORPORA = ['verdict', 'tiny', 'tinystories', 'wikitext2', 'shakespeare'] as const;
 export type Corpus = typeof CORPORA[number];
 
 // =============================================================================

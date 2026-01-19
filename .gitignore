@@ -48,6 +48,11 @@ checkpoints/
 *.safetensors
 *.ckpt
 
+# Large downloadable corpora (use: python -m experiments.pretraining.download_corpora --all)
+experiments/pretraining/corpus/tinystories.txt
+experiments/pretraining/corpus/wikitext2.txt
+experiments/pretraining/corpus/shakespeare.txt
+
 # Logs
 *.log
 logs/

@@ -192,9 +192,19 @@ class TextFileDataset(Dataset):
 CORPUS_DIR = Path(__file__).parent / "corpus"
 
 # Registry of available corpora
+# Built-in (small, for testing):
+#   - verdict: Short story by Edith Wharton (~8KB)
+#   - tiny: A few sentences (~350 bytes) - too small for nano config
+# Downloadable (run: python -m experiments.pretraining.download_corpora --all):
+#   - tinystories: 2.1M synthetic stories for training small LMs (~500MB)
+#   - wikitext2: Wikipedia articles (~12MB)
+#   - shakespeare: Complete works of Shakespeare (~1MB)
 CORPUS_REGISTRY = {
     'verdict': 'verdict.txt',
     'tiny': 'tiny.txt',
+    'tinystories': 'tinystories.txt',
+    'wikitext2': 'wikitext2.txt',
+    'shakespeare': 'shakespeare.txt',
 }
 
 

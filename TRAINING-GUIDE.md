@@ -44,13 +44,28 @@ python -m experiments.pretraining.train --config nano --corpus verdict --epochs 
 - **Good for**: Smoke testing the pipeline
 - **Limitation**: Essentially useless for learning
 
-## Alternative Datasets
+## Downloadable Datasets
 
-The included corpora are intentionally small for quick iteration. For more meaningful experiments, consider these alternatives:
+The included corpora (verdict, tiny) are intentionally small for quick iteration. For more meaningful experiments, download larger datasets:
+
+```bash
+# Download all datasets at once
+python -m experiments.pretraining.download_corpora --all
+
+# Or download individually
+python -m experiments.pretraining.download_corpora tinystories
+python -m experiments.pretraining.download_corpora wikitext2
+python -m experiments.pretraining.download_corpora shakespeare
+
+# Check what's available
+python -m experiments.pretraining.download_corpora --list
+```
 
 ### TinyStories (Recommended for Learning)
 
-**What**: 2.1M synthetic short stories written by GPT-3.5/4, designed for training small language models.
+**Size**: ~1.8 GB (2.1M stories)
+
+**What**: Synthetic short stories written by GPT-3.5/4, designed for training small language models.
 
 **Why it's great for learning**:
 - Specifically designed to show what small models (10M-100M params) can learn
@@ -58,53 +73,27 @@ The included corpora are intentionally small for quick iteration. For more meani
 - Stories follow coherent narratives, so you can evaluate quality subjectively
 - The paper "TinyStories: How Small Can Language Models Be and Still Speak Coherent English?" shows nano-scale models can produce grammatical text
 
-**How to use**:
-```bash
-# Download from HuggingFace
-pip install datasets
-python -c "from datasets import load_dataset; ds = load_dataset('roneneldan/TinyStories'); ds['train'].to_pandas()['text'].str.cat(sep='\n\n')[:5000000]" > experiments/pretraining/corpus/tinystories.txt
-```
-
-Then add to `experiments/pretraining/data.py`:
-```python
-CORPUS_REGISTRY = {
-    'verdict': 'verdict.txt',
-    'tiny': 'tiny.txt',
-    'tinystories': 'tinystories.txt',  # Add this
-}
-```
-
 ### WikiText-2
 
-**What**: 2M tokens from Wikipedia's "Good" and "Featured" articles.
+**Size**: ~12 MB
+
+**What**: Wikipedia articles from the "Good" and "Featured" categories.
 
 **Why it's useful**:
 - Standard benchmark for language modeling
 - Well-structured expository text
 - Good variety of topics and sentence structures
 
-**How to use**:
-```python
-from datasets import load_dataset
-ds = load_dataset('wikitext', 'wikitext-2-raw-v1')
-with open('experiments/pretraining/corpus/wikitext2.txt', 'w') as f:
-    f.write('\n'.join(ds['train']['text']))
-```
-
 ### Shakespeare
 
-**What**: Complete works of Shakespeare (~1M tokens)
+**Size**: ~1 MB
+
+**What**: Complete works of Shakespeare.
 
 **Why it's interesting**:
 - Distinctive patterns (meter, archaic vocabulary)
 - Easy to evaluate: does generated text "sound Shakespearean"?
 - Public domain, well-studied
-
-**How to use**:
-```bash
-curl -o experiments/pretraining/corpus/shakespeare.txt \
-  https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
-```
 
 ### Custom Text Files
 
