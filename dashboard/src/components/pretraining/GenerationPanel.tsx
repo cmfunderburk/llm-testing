@@ -19,6 +19,7 @@ export function GenerationPanel() {
   const [output, setOutput] = useState<GenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoadingCheckpoints, setIsLoadingCheckpoints] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Fetch available checkpoints
   const fetchCheckpoints = async () => {
@@ -92,6 +93,35 @@ export function GenerationPanel() {
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!confirm(`Delete all ${checkpoints.length} checkpoints? This cannot be undone.`)) {
+      return;
+    }
+
+    setIsDeleting(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`${API_URL}/api/pretraining/checkpoints/all`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Delete failed');
+      }
+
+      const data = await res.json();
+      setSelectedCheckpoint('');
+      await fetchCheckpoints();
+      alert(`Deleted ${data.deleted_count} checkpoint files.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const hasCheckpoints = checkpoints.length > 0;
 
   return (
@@ -127,6 +157,14 @@ export function GenerationPanel() {
               title="Refresh checkpoint list"
             >
               {isLoadingCheckpoints ? '...' : '↻'}
+            </button>
+            <button
+              className="btn btn-small btn-danger"
+              onClick={handleDeleteAll}
+              disabled={isDeleting || !hasCheckpoints}
+              title="Delete all checkpoints"
+            >
+              {isDeleting ? '...' : '🗑'}
             </button>
           </div>
         </div>

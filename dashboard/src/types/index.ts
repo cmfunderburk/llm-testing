@@ -23,6 +23,7 @@ export interface TrainingConfig {
   warmup_steps: number;
   save_checkpoints: boolean;
   context_length?: number;  // Optional override for model's default
+  resume_from?: string;  // checkpoint_id to resume from
 }
 
 export interface TrainingStatus {

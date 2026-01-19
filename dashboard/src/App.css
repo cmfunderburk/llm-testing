@@ -443,6 +443,17 @@ h3 { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--color-text-muted)
   color: #fff;
 }
 
+.btn-secondary {
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
 .btn-small {
   padding: 0.375rem 0.75rem;
   font-size: 0.75rem;
@@ -1057,6 +1068,20 @@ h3 { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--color-text-muted)
   margin-top: 0.5rem;
   font-size: 0.75rem;
   color: var(--color-warning);
+}
+
+/* =============================================================================
+   Config Warning
+   ============================================================================= */
+
+.config-warning {
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--color-warning);
+  margin-bottom: 0.5rem;
 }
 
 /* =============================================================================
