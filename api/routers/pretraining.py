@@ -109,13 +109,13 @@ class TrainingManager:
 
     async def start_training(self, config: TrainingConfig):
         """Start training in background."""
-        if self.status.state == "running":
+        if self.status.state in ("running", "loading"):
             raise HTTPException(status_code=400, detail="Training already running")
 
         self.should_stop = False
         self.should_pause = False
         self.status = TrainingStatus(
-            state="running",
+            state="loading",  # Start in loading state until training loop begins
             config=config,
         )
         self.metrics_history = []
@@ -182,7 +182,6 @@ class TrainingManager:
                 "state": "loading",
                 "message": "Model ready. Starting training...",
             })
-            await asyncio.sleep(0)
 
             optimizer = torch.optim.AdamW(
                 model.parameters(),
@@ -198,6 +197,13 @@ class TrainingManager:
             global_step = 0
             tokens_seen = 0
             start_time = time.time()
+
+            # Now actually starting training - update state
+            self.status.state = "running"
+            await self.broadcast_metrics({
+                "type": "status",
+                "state": "running",
+            })
 
             model.train()
             for epoch in range(config.epochs):
