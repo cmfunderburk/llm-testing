@@ -251,23 +251,34 @@ def list_checkpoints(
         if subdir.name != config_name and not subdir.name.startswith(f"{config_name}_"):
             continue
 
-        for path in subdir.glob("checkpoint_step_*.pt"):
-            try:
-                # Load just the metadata (not the full model)
-                checkpoint = torch.load(path, map_location='cpu', weights_only=False)
-                checkpoints.append({
-                    'path': str(path),
-                    'step': checkpoint.get('step', 0),
-                    'epoch': checkpoint.get('epoch', 0),
-                    'train_loss': checkpoint.get('train_loss'),
-                    'val_loss': checkpoint.get('val_loss'),
-                    'timestamp': checkpoint.get('timestamp'),
-                    'corpus': checkpoint.get('corpus'),
-                    'batch_size': checkpoint.get('batch_size'),
-                    'context_length': checkpoint.get('context_length'),
-                })
-            except Exception as e:
-                print(f"Warning: Could not load checkpoint {path}: {e}")
+        # Search for all checkpoint patterns:
+        # - checkpoint_step_*.pt (auto-saves at 25%, 50%, 75%)
+        # - checkpoint_manual_*.pt (manual saves)
+        # - checkpoint_final.pt (completion checkpoint)
+        patterns = ["checkpoint_step_*.pt", "checkpoint_manual_*.pt", "checkpoint_final.pt"]
+        seen_paths = set()
+
+        for pattern in patterns:
+            for path in subdir.glob(pattern):
+                if path in seen_paths:
+                    continue
+                seen_paths.add(path)
+                try:
+                    # Load just the metadata (not the full model)
+                    checkpoint = torch.load(path, map_location='cpu', weights_only=False)
+                    checkpoints.append({
+                        'path': str(path),
+                        'step': checkpoint.get('step', 0),
+                        'epoch': checkpoint.get('epoch', 0),
+                        'train_loss': checkpoint.get('train_loss'),
+                        'val_loss': checkpoint.get('val_loss'),
+                        'timestamp': checkpoint.get('timestamp'),
+                        'corpus': checkpoint.get('corpus'),
+                        'batch_size': checkpoint.get('batch_size'),
+                        'context_length': checkpoint.get('context_length'),
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not load checkpoint {path}: {e}")
 
     # Sort by step
     checkpoints.sort(key=lambda x: x['step'])
