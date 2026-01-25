@@ -1134,10 +1134,13 @@ h3 { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--color-text-muted)
 .checkpoint-select-row {
   display: flex;
   gap: 0.5rem;
+  min-width: 0;
 }
 
 .checkpoint-select-row select {
   flex: 1;
+  min-width: 0;
+  text-overflow: ellipsis;
 }
 
 .btn-small {
