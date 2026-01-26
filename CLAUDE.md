@@ -32,7 +32,12 @@ python -m experiments.probing.run_analysis
 python -m experiments.paper_reproduction.bayesian_geometry.experiment
 ```
 
-Install dependencies: `pip install unsloth transformers trl datasets torch matplotlib`
+This project uses **uv** for package management. Install dependencies with:
+```bash
+uv sync
+```
+
+To add new packages: `uv add <package>`
 
 ## Architecture
 

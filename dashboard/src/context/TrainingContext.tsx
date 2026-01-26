@@ -26,11 +26,21 @@ interface MetricsDataPoint {
   elapsed_time: number;
 }
 
+interface LoadingProgress {
+  phase: string;
+  message: string;
+  percent: number;
+  bytes_read: number;
+  total_bytes: number;
+  tokens: number;
+}
+
 interface TrainingContextState {
   isConnected: boolean;
   connectionError: string | null;
   status: TrainingStatus;
   loadingMessage: string | null;  // Message shown during initialization
+  loadingProgress: LoadingProgress | null;  // Detailed loading progress (tokenization)
   metricsHistory: MetricsDataPoint[];
   generations: { step: number; epoch: number; text: string }[];
   checkpoints: CheckpointInfo[];
@@ -47,6 +57,7 @@ type TrainingAction =
   | { type: 'SET_CONNECTION_ERROR'; payload: string | null }
   | { type: 'SET_STATUS'; payload: TrainingStatus }
   | { type: 'SET_LOADING_MESSAGE'; payload: string | null }
+  | { type: 'SET_LOADING_PROGRESS'; payload: LoadingProgress | null }
   | { type: 'ADD_METRICS'; payload: MetricsDataPoint }
   | { type: 'ADD_GENERATION'; payload: { step: number; epoch: number; text: string } }
   | { type: 'SET_CHECKPOINTS'; payload: CheckpointInfo[] }
@@ -73,6 +84,7 @@ const initialState: TrainingContextState = {
     config: null,
   },
   loadingMessage: null,
+  loadingProgress: null,
   metricsHistory: [],
   generations: [],
   checkpoints: [],
@@ -93,6 +105,9 @@ function trainingReducer(state: TrainingContextState, action: TrainingAction): T
 
     case 'SET_LOADING_MESSAGE':
       return { ...state, loadingMessage: action.payload };
+
+    case 'SET_LOADING_PROGRESS':
+      return { ...state, loadingProgress: action.payload };
 
     case 'ADD_METRICS': {
       // Deduplicate by step - only add if this step doesn't exist
@@ -238,6 +253,7 @@ export function TrainingProvider({ children }: TrainingProviderProps) {
             payload: {
               ...statusRef.current,
               state: data.state,
+              ...(data.total_steps !== undefined && { total_steps: data.total_steps }),
             },
           });
           // Handle loading message
@@ -245,7 +261,26 @@ export function TrainingProvider({ children }: TrainingProviderProps) {
             dispatch({ type: 'SET_LOADING_MESSAGE', payload: data.message });
           } else if (data.state === 'running') {
             dispatch({ type: 'SET_LOADING_MESSAGE', payload: null });
+            dispatch({ type: 'SET_LOADING_PROGRESS', payload: null });
           }
+        }
+        break;
+
+      case 'loading_progress':
+        dispatch({
+          type: 'SET_LOADING_PROGRESS',
+          payload: {
+            phase: data.phase || '',
+            message: data.message || '',
+            percent: data.percent || 0,
+            bytes_read: data.bytes_read || 0,
+            total_bytes: data.total_bytes || 0,
+            tokens: data.tokens || 0,
+          },
+        });
+        // Also update the loading message to the progress message
+        if (data.message) {
+          dispatch({ type: 'SET_LOADING_MESSAGE', payload: data.message });
         }
         break;
 

@@ -7,12 +7,22 @@ Extracted from experiments/pretraining/api/main.py
 
 import asyncio
 import logging
+import math
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_float(value: Optional[float]) -> Optional[float]:
+    """Convert NaN/Inf float values to None for JSON serialization."""
+    if value is None:
+        return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    return value
 
 
 # =============================================================================
@@ -22,6 +32,7 @@ logger = logging.getLogger(__name__)
 class TrainingConfig(BaseModel):
     config_name: str = "nano"
     corpus: str = "verdict"
+    val_corpus: Optional[str] = None  # Separate validation corpus (e.g., 'pg19_validation')
     epochs: int = 10
     batch_size: int = 4
     learning_rate: float = 3e-4
@@ -126,6 +137,8 @@ class TrainingManager:
         self._training_config: Optional[TrainingConfig] = None
         self._current_epoch = 0
         self._effective_context_length = 0
+        # Progress tracking for data loading (shared with executor thread)
+        self._loading_progress: Dict[str, Any] = {}
 
     async def broadcast_metrics(self, metrics: Dict[str, Any]):
         """Send metrics to all connected WebSocket clients."""
@@ -172,7 +185,7 @@ class TrainingManager:
         from experiments.pretraining.config import get_config
         from experiments.pretraining.tokenizer import Tokenizer
         from experiments.pretraining.data import create_train_val_dataloaders
-        from experiments.pretraining.train import calc_loss_batch, get_lr_scheduler
+        from experiments.pretraining.train import calc_loss_batch, calc_loss_loader, get_lr_scheduler
         from experiments.pretraining.generate import generate_text
         from experiments.pretraining.checkpoint import save_checkpoint, load_checkpoint, list_checkpoints
         import time
@@ -271,20 +284,85 @@ class TrainingManager:
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "loading",
-                "message": f"Loading corpus '{config.corpus}'... (this may take a minute for large datasets)",
+                "message": f"Loading corpus '{config.corpus}'...",
             })
 
-            # Run blocking data loading in thread pool to not block the event loop
+            # Progress callback for tokenization (called from executor thread)
+            def on_tokenization_progress(phase: str, bytes_read: int, total_bytes: int, tokens_so_far: int):
+                self._loading_progress = {
+                    "phase": phase,
+                    "bytes_read": bytes_read,
+                    "total_bytes": total_bytes,
+                    "tokens_so_far": tokens_so_far,
+                    "corpus": config.corpus,
+                }
+
+            # Background task to broadcast loading progress
+            async def broadcast_loading_progress():
+                last_broadcast = {}
+                while self.status.state == "loading":
+                    progress = self._loading_progress.copy()
+                    if progress and progress != last_broadcast:
+                        phase = progress.get("phase", "")
+                        bytes_read = progress.get("bytes_read", 0)
+                        total_bytes = progress.get("total_bytes", 0)
+                        tokens = progress.get("tokens_so_far", 0)
+                        corpus = progress.get("corpus", "")
+
+                        if phase == "checking_cache":
+                            message = f"Checking cache for '{corpus}'..."
+                        elif phase == "loaded_from_cache":
+                            message = f"Loaded {tokens:,} tokens from cache"
+                        elif phase == "tokenizing" and total_bytes > 0:
+                            pct = (bytes_read / total_bytes) * 100
+                            mb_read = bytes_read / (1024 * 1024)
+                            mb_total = total_bytes / (1024 * 1024)
+                            message = f"Tokenizing '{corpus}': {mb_read:.0f}/{mb_total:.0f} MB ({pct:.1f}%) - {tokens:,} tokens"
+                        elif phase == "saving_cache":
+                            message = f"Saving {tokens:,} tokens to cache..."
+                        elif phase == "complete":
+                            message = f"Tokenization complete: {tokens:,} tokens"
+                        else:
+                            message = f"Loading '{corpus}'..."
+
+                        await self.broadcast_metrics({
+                            "type": "loading_progress",
+                            "phase": phase,
+                            "bytes_read": bytes_read,
+                            "total_bytes": total_bytes,
+                            "tokens": tokens,
+                            "message": message,
+                            "percent": (bytes_read / total_bytes * 100) if total_bytes > 0 else 0,
+                        })
+                        last_broadcast = progress
+
+                    await asyncio.sleep(0.5)  # Update every 500ms
+
+            # Start progress broadcaster
             loop = asyncio.get_event_loop()
-            train_loader, val_loader = await loop.run_in_executor(
-                None,
-                lambda: create_train_val_dataloaders(
-                    corpus=config.corpus,
-                    batch_size=config.batch_size,
-                    context_length=effective_context_length,
-                    tokenizer=tokenizer,
+            progress_task = asyncio.create_task(broadcast_loading_progress())
+
+            try:
+                # Run blocking data loading in thread pool to not block the event loop
+                train_loader, val_loader = await loop.run_in_executor(
+                    None,
+                    lambda: create_train_val_dataloaders(
+                        corpus=config.corpus,
+                        val_corpus=config.val_corpus,
+                        batch_size=config.batch_size,
+                        context_length=effective_context_length,
+                        tokenizer=tokenizer,
+                        progress_callback=on_tokenization_progress,
+                    )
                 )
-            )
+            finally:
+                # Stop progress broadcaster
+                progress_task.cancel()
+                try:
+                    await progress_task
+                except asyncio.CancelledError:
+                    pass
+                self._loading_progress = {}
 
             await self.broadcast_metrics({
                 "type": "status",
@@ -301,9 +379,6 @@ class TrainingManager:
             # Restore optimizer state if resuming
             if resumed_optimizer_state is not None:
                 optimizer.load_state_dict(resumed_optimizer_state)
-                # Update learning rate to new config value (in case user changed it)
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = config.learning_rate
 
             total_steps = len(train_loader) * config.epochs
             scheduler = get_lr_scheduler(optimizer, config.warmup_steps, total_steps)
@@ -312,6 +387,12 @@ class TrainingManager:
             if start_step > 0:
                 for _ in range(start_step):
                     scheduler.step()
+                # Apply user's learning rate AFTER scheduler advancement
+                # This allows overriding the LR when resuming
+                # Update both optimizer and scheduler's base_lrs so future steps use new LR
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = config.learning_rate
+                scheduler.base_lrs = [config.learning_rate for _ in scheduler.base_lrs]
 
             self.status.total_steps = total_steps
 
@@ -337,6 +418,7 @@ class TrainingManager:
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "running",
+                "total_steps": total_steps,
                 "resumed_from_step": start_step if start_step > 0 else None,
             })
 
@@ -494,6 +576,26 @@ class TrainingManager:
                     "text": sample[:200],
                 }
                 await self.broadcast_metrics(generation_msg)
+
+                # Compute validation loss at end of epoch
+                model.eval()
+                with torch.no_grad():
+                    # Limit to 50 batches for speed on large validation sets
+                    val_loss = await loop.run_in_executor(
+                        None,
+                        lambda: calc_loss_loader(val_loader, model, device, num_batches=50)
+                    )
+                self.status.val_loss = val_loss
+                model.train()
+
+                val_metrics = {
+                    "type": "validation",
+                    "step": global_step,
+                    "epoch": epoch + 1,
+                    "val_loss": val_loss,
+                    "train_loss": self.status.train_loss,
+                }
+                await self.broadcast_metrics(val_metrics)
 
             # Always save final model on completion (100% checkpoint)
             final_checkpoint_path = save_checkpoint(
@@ -679,8 +781,8 @@ async def list_checkpoints_endpoint(config_name: str = "nano"):
             path=ckpt['path'],
             step=ckpt['step'],
             epoch=ckpt['epoch'],
-            train_loss=ckpt['train_loss'],
-            val_loss=ckpt['val_loss'],
+            train_loss=_sanitize_float(ckpt['train_loss']),
+            val_loss=_sanitize_float(ckpt['val_loss']),
             timestamp=ckpt['timestamp'],
             corpus=corpus,
             batch_size=batch_size,
@@ -738,8 +840,8 @@ async def get_checkpoint(checkpoint_id: str):
                 path=ckpt['path'],
                 step=ckpt['step'],
                 epoch=ckpt['epoch'],
-                train_loss=ckpt['train_loss'],
-                val_loss=ckpt['val_loss'],
+                train_loss=_sanitize_float(ckpt['train_loss']),
+                val_loss=_sanitize_float(ckpt['val_loss']),
                 timestamp=ckpt['timestamp'],
                 corpus=ckpt.get('corpus'),
                 batch_size=ckpt.get('batch_size'),
