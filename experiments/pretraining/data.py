@@ -36,6 +36,7 @@ from torch.utils.data import Dataset, DataLoader
 from typing import Optional, Dict, List, Tuple, Union
 from pathlib import Path
 import os
+import numpy as np
 
 from .tokenizer import Tokenizer
 
@@ -67,7 +68,7 @@ class GPTDataset(Dataset):
 
     def __init__(
         self,
-        token_ids: List[int],
+        token_ids: Union[List[int], np.ndarray],
         context_length: int,
         stride: int = 1
     ):
@@ -75,17 +76,27 @@ class GPTDataset(Dataset):
         Initialize the dataset.
 
         Args:
-            token_ids: List of token IDs from the tokenized text
+            token_ids: Token IDs as numpy array (preferred) or list
             context_length: Number of tokens in each training sequence
             stride: Step size for sliding window (1 = maximum overlap)
         """
-        self.token_ids = torch.tensor(token_ids, dtype=torch.long)
+        # Convert to tensor efficiently - avoid Python list intermediate
+        if isinstance(token_ids, np.ndarray):
+            # Keep as int32 to avoid doubling memory (2.75B tokens = 11GB vs 22GB)
+            # PyTorch embedding layers work fine with int32 inputs
+            if token_ids.dtype != np.int32:
+                token_ids = token_ids.astype(np.int32, copy=False)
+            self.token_ids = torch.from_numpy(np.ascontiguousarray(token_ids))
+        else:
+            # Fallback for lists (legacy) - use int32 for consistency
+            self.token_ids = torch.tensor(token_ids, dtype=torch.int32)
+
         self.context_length = context_length
         self.stride = stride
 
         # Calculate number of samples
         # We need context_length + 1 tokens for each sample (input + 1 target)
-        total_len = len(token_ids)
+        total_len = len(self.token_ids)
         self.n_samples = max(0, (total_len - context_length - 1) // stride + 1)
 
     def __len__(self) -> int:
@@ -114,9 +125,10 @@ class GPTDataset(Dataset):
         tokens = self.token_ids[start_idx:end_idx]
 
         # Input is first context_length tokens
-        input_ids = tokens[:-1]
+        # Convert to int64 (long) only for the small batch slice, not full dataset
+        input_ids = tokens[:-1].long()
         # Target is last context_length tokens (shifted by 1)
-        labels = tokens[1:]
+        labels = tokens[1:].long()
 
         return {
             'input_ids': input_ids,
@@ -157,7 +169,8 @@ class TextFileDataset(Dataset):
         with open(file_path, 'r', encoding='utf-8') as f:
             text = f.read()
 
-        self.token_ids = tokenizer.encode(text)
+        # Convert to numpy array for memory efficiency
+        self.token_ids = np.array(tokenizer.encode(text), dtype=np.int32)
         self.n_tokens = len(self.token_ids)
 
         # Create the underlying dataset
@@ -200,12 +213,20 @@ CACHE_DIR = CORPUS_DIR / ".cache"
 #   - tinystories: 2.1M synthetic stories for training small LMs (~500MB)
 #   - wikitext2: Wikipedia articles (~12MB)
 #   - shakespeare: Complete works of Shakespeare (~1MB)
+#   - pg19_train/pg19_validation/pg19_test: Official PG-19 splits (~11GB total)
+#   - pg19_*_small: Small subset (100 books per split) for testing
 CORPUS_REGISTRY = {
     'verdict': 'verdict.txt',
     'tiny': 'tiny.txt',
     'tinystories': 'tinystories.txt',
     'wikitext2': 'wikitext2.txt',
     'shakespeare': 'shakespeare.txt',
+    'pg19_train': 'pg19_train.txt',
+    'pg19_validation': 'pg19_validation.txt',
+    'pg19_test': 'pg19_test.txt',
+    'pg19_train_small': 'pg19_train_small.txt',
+    'pg19_validation_small': 'pg19_validation_small.txt',
+    'pg19_test_small': 'pg19_test_small.txt',
 }
 
 
@@ -216,14 +237,13 @@ def get_cache_path(corpus_name: str, encoding_name: str = "gpt2") -> Path:
     return CACHE_DIR / f"{safe_name}.{encoding_name}.tokens.pt"
 
 
-def load_cached_tokens(corpus_path: Path, encoding_name: str = "gpt2") -> Optional[List[int]]:
+def load_cached_tokens(corpus_path: Path, encoding_name: str = "gpt2") -> Optional[np.ndarray]:
     """
     Load cached tokenized corpus if available and valid.
 
     Returns None if cache doesn't exist or is stale (corpus file was modified).
+    Returns numpy array (int32) for memory efficiency.
     """
-    import torch
-
     corpus_name = corpus_path.stem
     cache_path = get_cache_path(corpus_name, encoding_name)
 
@@ -239,7 +259,10 @@ def load_cached_tokens(corpus_path: Path, encoding_name: str = "gpt2") -> Option
         return None
 
     try:
-        token_ids = torch.load(cache_path, weights_only=True).tolist()
+        # Load as tensor then convert to numpy - avoids Python list intermediate
+        token_tensor = torch.load(cache_path, weights_only=True)
+        token_ids = token_tensor.numpy()
+        del token_tensor  # Free tensor memory immediately
         print(f"Loaded {len(token_ids):,} tokens from cache for {corpus_name}")
         return token_ids
     except Exception as e:
@@ -247,15 +270,95 @@ def load_cached_tokens(corpus_path: Path, encoding_name: str = "gpt2") -> Option
         return None
 
 
-def save_cached_tokens(corpus_name: str, token_ids: List[int], encoding_name: str = "gpt2"):
-    """Save tokenized corpus to cache."""
-    import torch
+# =============================================================================
+# Progress Callback Type
+# =============================================================================
 
+from typing import Callable
+
+# Progress callback signature: (phase, bytes_read, total_bytes, tokens_so_far) -> None
+ProgressCallback = Callable[[str, int, int, int], None]
+
+
+def tokenize_corpus_chunked(
+    corpus_path: Path,
+    tokenizer: "Tokenizer",
+    chunk_size_mb: int = 50,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> np.ndarray:
+    """
+    Tokenize a corpus file in chunks to avoid memory explosion.
+
+    For large files (e.g., 11GB PG-19), loading the entire file into memory
+    and tokenizing at once can require 30-50GB+ of RAM. This function:
+    1. Reads the file in chunks (default 50MB)
+    2. Tokenizes each chunk
+    3. Accumulates tokens in a numpy array (much more memory-efficient than Python lists)
+
+    Args:
+        corpus_path: Path to the corpus file
+        tokenizer: Tokenizer instance
+        chunk_size_mb: Size of each chunk in megabytes
+        progress_callback: Optional callback for progress updates
+                          Called with (phase, bytes_read, total_bytes, tokens_so_far)
+
+    Returns:
+        Numpy array of token IDs (int32)
+    """
+    chunk_size_bytes = chunk_size_mb * 1024 * 1024
+    total_size = corpus_path.stat().st_size
+
+    # Pre-allocate numpy array (estimate ~4 chars per token for English text)
+    estimated_tokens = total_size // 4
+    tokens_array = np.zeros(estimated_tokens, dtype=np.int32)
+    token_count = 0
+
+    bytes_read = 0
+
+    with open(corpus_path, 'r', encoding='utf-8') as f:
+        while True:
+            chunk = f.read(chunk_size_bytes)
+            if not chunk:
+                break
+
+            bytes_read += len(chunk.encode('utf-8'))
+
+            # Tokenize this chunk
+            chunk_tokens = tokenizer.encode(chunk)
+
+            # Ensure array is large enough
+            needed_size = token_count + len(chunk_tokens)
+            if needed_size > len(tokens_array):
+                # Grow array by 50%
+                new_size = max(needed_size, int(len(tokens_array) * 1.5))
+                new_array = np.zeros(new_size, dtype=np.int32)
+                new_array[:token_count] = tokens_array[:token_count]
+                tokens_array = new_array
+
+            # Append tokens
+            tokens_array[token_count:token_count + len(chunk_tokens)] = chunk_tokens
+            token_count += len(chunk_tokens)
+
+            if progress_callback:
+                progress_callback("tokenizing", bytes_read, total_size, token_count)
+
+    # Trim to actual size and return contiguous array
+    return np.ascontiguousarray(tokens_array[:token_count])
+
+
+def save_cached_tokens(corpus_name: str, token_ids: Union[List[int], np.ndarray], encoding_name: str = "gpt2"):
+    """Save tokenized corpus to cache."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_path = get_cache_path(corpus_name, encoding_name)
 
-    # Save as tensor for efficient storage
-    token_tensor = torch.tensor(token_ids, dtype=torch.int32)
+    # Convert to tensor efficiently for storage
+    if isinstance(token_ids, np.ndarray):
+        # Zero-copy conversion from numpy
+        token_tensor = torch.from_numpy(token_ids.astype(np.int32, copy=False))
+    else:
+        # Fallback for lists (legacy)
+        token_tensor = torch.tensor(token_ids, dtype=torch.int32)
+
     torch.save(token_tensor, cache_path)
 
     size_mb = cache_path.stat().st_size / (1024 * 1024)
@@ -372,29 +475,111 @@ def get_dataloader(
     )
 
 
+def _load_corpus_tokens(
+    corpus: str,
+    tokenizer,
+    encoding_name: str,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> np.ndarray:
+    """
+    Load and tokenize a corpus, using cache if available.
+
+    Args:
+        corpus: Corpus name or path
+        tokenizer: Tokenizer instance
+        encoding_name: Name of the encoding (for cache key)
+        progress_callback: Optional callback for progress updates
+
+    Returns:
+        Numpy array of token IDs (int32) for memory efficiency
+    """
+    corpus_path = get_corpus_path(corpus)
+
+    # Try to load from cache first
+    if progress_callback:
+        progress_callback("checking_cache", 0, 0, 0)
+
+    token_ids = load_cached_tokens(corpus_path, encoding_name)
+
+    if token_ids is not None:
+        if progress_callback:
+            progress_callback("loaded_from_cache", 0, 0, len(token_ids))
+        return token_ids
+
+    # Cache miss - tokenize the file
+    file_size = corpus_path.stat().st_size
+    file_size_mb = file_size / (1024 * 1024)
+
+    # Use chunked tokenization for files > 100MB to avoid memory issues
+    if file_size_mb > 100:
+        print(f"Tokenizing {corpus_path.name} ({file_size_mb:.1f} MB) in chunks...")
+        token_ids = tokenize_corpus_chunked(
+            corpus_path,
+            tokenizer,
+            chunk_size_mb=50,
+            progress_callback=progress_callback,
+        )
+    else:
+        # Small file - load all at once (faster for small files)
+        print(f"Tokenizing {corpus_path.name}...")
+        if progress_callback:
+            progress_callback("tokenizing", 0, file_size, 0)
+
+        with open(corpus_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+
+        # Convert list to numpy array immediately
+        token_ids = np.array(tokenizer.encode(text), dtype=np.int32)
+
+        if progress_callback:
+            progress_callback("tokenizing", file_size, file_size, len(token_ids))
+
+    print(f"Tokenized into {len(token_ids):,} tokens")
+
+    # Save to cache for next time
+    if progress_callback:
+        progress_callback("saving_cache", 0, 0, len(token_ids))
+
+    save_cached_tokens(corpus_path.stem, token_ids, encoding_name)
+
+    if progress_callback:
+        progress_callback("complete", 0, 0, len(token_ids))
+
+    return token_ids
+
+
 def create_train_val_dataloaders(
     corpus: str,
     batch_size: int = 4,
     context_length: int = 256,
     stride: Optional[int] = None,
     val_split: float = 0.1,
+    val_corpus: Optional[str] = None,
     num_workers: int = 0,
     tokenizer: Optional[Tokenizer] = None,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create training and validation DataLoaders.
 
-    Splits the corpus into training and validation sets based on position
-    (not random split, to avoid leakage in sequential data).
+    By default, splits the corpus into training and validation sets based on
+    position (not random split, to avoid leakage in sequential data).
+
+    If val_corpus is provided, uses that as a separate validation set instead
+    of splitting. This is useful for datasets with official splits like PG-19.
 
     Args:
-        corpus: Name of corpus or path to text file
+        corpus: Name of corpus or path to text file (used for training)
         batch_size: Number of samples per batch
         context_length: Number of tokens per sequence
         stride: Sliding window stride
         val_split: Fraction of data to use for validation (0.1 = 10%)
+                   Ignored if val_corpus is provided.
+        val_corpus: Optional separate corpus for validation (e.g., 'pg19_validation')
         num_workers: Number of data loading workers
         tokenizer: Tokenizer to use
+        progress_callback: Optional callback for tokenization progress updates
+                          Called with (phase, bytes_read, total_bytes, tokens_so_far)
 
     Returns:
         Tuple of (train_dataloader, val_dataloader)
@@ -402,33 +587,36 @@ def create_train_val_dataloaders(
     if tokenizer is None:
         tokenizer = Tokenizer()
 
-    corpus_path = get_corpus_path(corpus)
     encoding_name = getattr(tokenizer, 'encoding_name', 'gpt2')
 
-    # Try to load from cache first
-    token_ids = load_cached_tokens(corpus_path, encoding_name)
+    import gc
 
-    if token_ids is None:
-        # Cache miss - load and tokenize the full text
-        print(f"Tokenizing {corpus_path.name}...")
-        with open(corpus_path, 'r', encoding='utf-8') as f:
-            text = f.read()
-
-        token_ids = tokenizer.encode(text)
-        print(f"Tokenized into {len(token_ids):,} tokens")
-
-        # Save to cache for next time
-        save_cached_tokens(corpus_path.stem, token_ids, encoding_name)
-
-    # Split into train and validation
-    split_idx = int(len(token_ids) * (1 - val_split))
-    train_tokens = token_ids[:split_idx]
-    val_tokens = token_ids[split_idx:]
+    if val_corpus is not None:
+        # Use separate validation corpus
+        train_tokens = _load_corpus_tokens(corpus, tokenizer, encoding_name, progress_callback)
+        val_tokens = _load_corpus_tokens(val_corpus, tokenizer, encoding_name, progress_callback)
+    else:
+        # Split single corpus into train/val
+        token_ids = _load_corpus_tokens(corpus, tokenizer, encoding_name, progress_callback)
+        split_idx = int(len(token_ids) * (1 - val_split))
+        # Copy to ensure contiguous arrays (numpy slices share memory with original)
+        train_tokens = np.ascontiguousarray(token_ids[:split_idx])
+        val_tokens = np.ascontiguousarray(token_ids[split_idx:])
+        # Free the original array
+        del token_ids
+        gc.collect()
 
     # Create datasets
     stride_val = stride if stride is not None else context_length
     train_dataset = GPTDataset(train_tokens, context_length, stride_val)
+    # Free numpy array after tensor is created
+    del train_tokens
+    gc.collect()
+
     val_dataset = GPTDataset(val_tokens, context_length, stride_val)
+    # Free numpy array after tensor is created
+    del val_tokens
+    gc.collect()
 
     # Create dataloaders
     train_loader = DataLoader(

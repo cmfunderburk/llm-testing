@@ -17,6 +17,7 @@ export type TrainingState = 'idle' | 'loading' | 'running' | 'paused' | 'complet
 export interface TrainingConfig {
   config_name: string;
   corpus: string;
+  val_corpus?: string;  // Separate validation corpus (e.g., 'pg19_validation')
   epochs: number;
   batch_size: number;
   learning_rate: number;
@@ -39,7 +40,7 @@ export interface TrainingStatus {
 }
 
 export interface TrainingMetrics {
-  type: 'metrics' | 'generation' | 'complete' | 'error' | 'status' | 'heartbeat';
+  type: 'metrics' | 'generation' | 'complete' | 'error' | 'status' | 'heartbeat' | 'loading_progress';
   step?: number;
   epoch?: number;
   train_loss?: number;
@@ -51,6 +52,12 @@ export interface TrainingMetrics {
   text?: string;
   message?: string;  // Loading/error messages
   state?: TrainingState;
+  // Loading progress fields
+  phase?: string;
+  bytes_read?: number;
+  total_bytes?: number;
+  tokens?: number;
+  percent?: number;
 }
 
 export interface CheckpointInfo {
@@ -85,11 +92,39 @@ export interface GenerateResponse {
 export const MODEL_CONFIGS = ['nano', 'small', 'medium'] as const;
 export type ModelConfig = typeof MODEL_CONFIGS[number];
 
-// Corpora available for pretraining
-// Built-in: verdict, tiny (small, for testing)
-// Downloadable: tinystories, wikitext2, shakespeare
-// Run: python -m experiments.pretraining.download_corpora --all
-export const CORPORA = ['verdict', 'tiny', 'tinystories', 'wikitext2', 'shakespeare'] as const;
+// Dataset definitions with optional train/val splits
+// For datasets with official splits, val_corpus is set automatically
+export interface DatasetConfig {
+  name: string;
+  corpus: string;
+  val_corpus?: string;  // If set, uses official validation split
+  description: string;
+  size: string;
+}
+
+export const DATASETS: DatasetConfig[] = [
+  // Built-in small datasets (auto-split)
+  { name: 'Verdict', corpus: 'verdict', description: 'Built-in test corpus', size: '~8 KB' },
+  { name: 'Tiny', corpus: 'tiny', description: 'Minimal test corpus', size: '~350 B' },
+
+  // Downloadable datasets (auto-split)
+  { name: 'Shakespeare', corpus: 'shakespeare', description: 'Complete works of Shakespeare', size: '~1 MB' },
+  { name: 'WikiText-2', corpus: 'wikitext2', description: 'Wikipedia articles', size: '~13 MB' },
+  { name: 'TinyStories', corpus: 'tinystories', description: '2.1M synthetic short stories', size: '~1.8 GB' },
+
+  // PG-19 with official splits
+  { name: 'PG-19 (small)', corpus: 'pg19_train_small', val_corpus: 'pg19_validation_small',
+    description: 'Project Gutenberg subset (100 books)', size: '~40 MB' },
+  { name: 'PG-19 (full)', corpus: 'pg19_train', val_corpus: 'pg19_validation',
+    description: 'Project Gutenberg pre-1919 books', size: '~11 GB' },
+];
+
+// Legacy: individual corpus names for backward compatibility
+export const CORPORA = [
+  'verdict', 'tiny', 'tinystories', 'wikitext2', 'shakespeare',
+  'pg19_train', 'pg19_validation', 'pg19_test',
+  'pg19_train_small', 'pg19_validation_small', 'pg19_test_small',
+] as const;
 export type Corpus = typeof CORPORA[number];
 
 // =============================================================================

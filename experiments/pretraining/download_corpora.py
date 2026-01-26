@@ -1,17 +1,22 @@
 """
 Corpus Download Script
 
-Downloads training corpora from HuggingFace datasets.
+Downloads training corpora from HuggingFace datasets and Google Cloud Storage.
 Available corpora:
 - tinystories: 2.1M synthetic short stories (TinyStories dataset)
 - wikitext2: Wikipedia articles from WikiText-2
 - shakespeare: Complete works of Shakespeare (~1M characters)
+- pg19: Project Gutenberg books pre-1919 with official train/val/test splits
+        (~29K books total, ~11GB) - creates pg19_train.txt, pg19_validation.txt, pg19_test.txt
+- pg19_small: Subset of PG-19 (100 books per split) for testing
 
 Usage:
     python -m experiments.pretraining.download_corpora           # Download all
     python -m experiments.pretraining.download_corpora tinystories
     python -m experiments.pretraining.download_corpora wikitext2
     python -m experiments.pretraining.download_corpora shakespeare
+    python -m experiments.pretraining.download_corpora pg19
+    python -m experiments.pretraining.download_corpora pg19_small
 """
 
 import argparse
@@ -158,10 +163,173 @@ def download_shakespeare(verbose: bool = True) -> Path:
     return output_path
 
 
+def _list_gcs_files(bucket_url: str, prefix: str) -> list[str]:
+    """List all .txt files in a GCS bucket with given prefix."""
+    import urllib.request
+    import xml.etree.ElementTree as ET
+
+    files = []
+    marker = ""
+
+    while True:
+        list_url = f"{bucket_url}/?prefix={prefix}&marker={marker}"
+        with urllib.request.urlopen(list_url) as response:
+            xml_content = response.read().decode("utf-8")
+
+        root = ET.fromstring(xml_content)
+        ns = {"s3": "http://doc.s3.amazonaws.com/2006-03-01"}
+
+        for contents in root.findall("s3:Contents", ns):
+            key = contents.find("s3:Key", ns).text
+            if key.endswith(".txt"):
+                files.append(key)
+
+        is_truncated = root.find("s3:IsTruncated", ns)
+        if is_truncated is not None and is_truncated.text == "true":
+            next_marker = root.find("s3:NextMarker", ns)
+            if next_marker is not None:
+                marker = next_marker.text
+            else:
+                break
+        else:
+            break
+
+    return files
+
+
+def _download_gcs_split(
+    split: str,
+    output_path: Path,
+    max_books: int | None = None,
+    verbose: bool = True
+) -> Path:
+    """Download a single split (train/validation/test) from PG-19."""
+    import urllib.request
+
+    GCS_BUCKET = "https://storage.googleapis.com/deepmind-gutenberg"
+
+    if output_path.exists():
+        if verbose:
+            size_bytes = output_path.stat().st_size
+            size_gb = size_bytes / (1024 * 1024 * 1024)
+            if size_gb >= 1:
+                print(f"  {split}: Already exists ({size_gb:.2f} GB)", flush=True)
+            else:
+                size_mb = size_bytes / (1024 * 1024)
+                print(f"  {split}: Already exists ({size_mb:.1f} MB)", flush=True)
+        return output_path
+
+    if verbose:
+        print(f"  {split}: Fetching file list...", flush=True)
+
+    files = _list_gcs_files(GCS_BUCKET, f"{split}/")
+
+    if verbose:
+        print(f"  {split}: Found {len(files):,} books", flush=True)
+
+    if max_books:
+        files = files[:max_books]
+
+    books_to_download = len(files)
+    failed_count = 0
+
+    if verbose:
+        print(f"  {split}: Downloading {books_to_download:,} books...", flush=True)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        for i, file_key in enumerate(files):
+            try:
+                url = f"{GCS_BUCKET}/{file_key}"
+                with urllib.request.urlopen(url, timeout=60) as response:
+                    text = response.read().decode("utf-8")
+                f.write(text)
+                f.write("\n\n")
+            except Exception as e:
+                failed_count += 1
+                if verbose and failed_count <= 3:
+                    print(f"    Warning: Failed {file_key}: {e}", flush=True)
+
+            if verbose and (i + 1) % 500 == 0:
+                print(f"  {split}: Progress {i + 1:,} / {books_to_download:,}", flush=True)
+
+    size_bytes = output_path.stat().st_size
+    size_gb = size_bytes / (1024 * 1024 * 1024)
+    if verbose:
+        if size_gb >= 1:
+            print(f"  {split}: Done! {size_gb:.2f} GB", flush=True)
+        else:
+            size_mb = size_bytes / (1024 * 1024)
+            print(f"  {split}: Done! {size_mb:.1f} MB", flush=True)
+        if failed_count > 0:
+            print(f"  {split}: {failed_count} books failed", flush=True)
+
+    return output_path
+
+
+def download_pg19(verbose: bool = True, max_books: int | None = None, suffix: str = "") -> dict[str, Path]:
+    """
+    Download the PG-19 dataset with official train/validation/test splits.
+
+    PG-19 contains ~29K books from Project Gutenberg, all published before 1919.
+    This is a large-scale language modeling benchmark from DeepMind.
+
+    Downloads directly from Google Cloud Storage bucket: gs://deepmind-gutenberg
+
+    Creates three files:
+    - pg19_train.txt (~28K books, ~11GB)
+    - pg19_validation.txt (small validation set)
+    - pg19_test.txt (small test set)
+
+    Args:
+        verbose: Print progress information
+        max_books: Limit to first N books per split (None for all)
+        suffix: Optional suffix for filenames (e.g., "_small" -> pg19_train_small.txt)
+
+    Returns:
+        Dict mapping split names to file paths
+    """
+    CORPUS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if verbose:
+        print("Downloading PG-19 from Google Cloud Storage...", flush=True)
+        print("  Bucket: gs://deepmind-gutenberg", flush=True)
+        if max_books:
+            print(f"  Limiting to {max_books:,} books per split", flush=True)
+        print("", flush=True)
+
+    splits = ["train", "validation", "test"]
+    paths = {}
+
+    for split in splits:
+        output_path = CORPUS_DIR / f"pg19_{split}{suffix}.txt"
+        _download_gcs_split(split, output_path, max_books, verbose)
+        paths[split] = output_path
+        if verbose:
+            print("", flush=True)
+
+    if verbose:
+        print("PG-19 download complete!", flush=True)
+
+    return paths
+
+
+def download_pg19_small(verbose: bool = True) -> dict[str, Path]:
+    """
+    Download a small subset of PG-19 (100 books per split).
+
+    Creates: pg19_train_small.txt, pg19_validation_small.txt, pg19_test_small.txt
+
+    Good for experimentation before committing to the full dataset.
+    """
+    return download_pg19(verbose=verbose, max_books=100, suffix="_small")
+
+
 DOWNLOADERS = {
     "tinystories": download_tinystories,
     "wikitext2": download_wikitext2,
     "shakespeare": download_shakespeare,
+    "pg19": download_pg19,
+    "pg19_small": download_pg19_small,
 }
 
 

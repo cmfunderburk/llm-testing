@@ -4,8 +4,8 @@
 
 import { useState, useEffect } from 'react';
 import { useTraining } from '../../context/TrainingContext';
-import type { TrainingConfig, CheckpointInfo } from '../../types';
-import { MODEL_CONFIGS, CORPORA } from '../../types';
+import type { TrainingConfig, CheckpointInfo, DatasetConfig } from '../../types';
+import { MODEL_CONFIGS, DATASETS } from '../../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -36,9 +36,11 @@ interface VRAMEstimate {
 export function TrainingControls() {
   const { status, isLoading, startTraining, pauseTraining, resumeTraining, stopTraining } = useTraining();
 
+  const [selectedDataset, setSelectedDataset] = useState<DatasetConfig>(DATASETS[0]);
   const [config, setConfig] = useState<TrainingConfig>({
     config_name: 'nano',
-    corpus: 'verdict',
+    corpus: DATASETS[0].corpus,
+    val_corpus: DATASETS[0].val_corpus,
     epochs: 10,
     batch_size: 4,
     learning_rate: 3e-4,
@@ -47,6 +49,19 @@ export function TrainingControls() {
     context_length: 256,
     resume_from: undefined,
   });
+
+  // Update corpus/val_corpus when dataset changes
+  const handleDatasetChange = (datasetName: string) => {
+    const dataset = DATASETS.find(d => d.name === datasetName);
+    if (dataset) {
+      setSelectedDataset(dataset);
+      setConfig(prev => ({
+        ...prev,
+        corpus: dataset.corpus,
+        val_corpus: dataset.val_corpus,
+      }));
+    }
+  };
 
   const [vramEstimate, setVramEstimate] = useState<VRAMEstimate | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointInfo[]>([]);
@@ -257,16 +272,22 @@ export function TrainingControls() {
         </div>
 
         <div className="form-row">
-          <label>Corpus</label>
+          <label>Dataset</label>
           <select
-            value={config.corpus}
-            onChange={(e) => setConfig({ ...config, corpus: e.target.value })}
+            value={selectedDataset.name}
+            onChange={(e) => handleDatasetChange(e.target.value)}
             disabled={!canStart}
           >
-            {CORPORA.map((c) => (
-              <option key={c} value={c}>{c}</option>
+            {DATASETS.map((d) => (
+              <option key={d.name} value={d.name}>
+                {d.name} ({d.size})
+              </option>
             ))}
           </select>
+          <small className="form-hint">
+            {selectedDataset.description}
+            {selectedDataset.val_corpus && ' (official train/val split)'}
+          </small>
         </div>
 
         <div className="form-row">

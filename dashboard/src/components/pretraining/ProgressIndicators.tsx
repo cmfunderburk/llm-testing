@@ -5,7 +5,7 @@
 import { useTraining } from '../../context/TrainingContext';
 
 export function ProgressIndicators() {
-  const { status, loadingMessage } = useTraining();
+  const { status, loadingMessage, loadingProgress } = useTraining();
 
   const stepProgress =
     status.total_steps > 0 ? (status.current_step / status.total_steps) * 100 : 0;
@@ -37,14 +37,48 @@ export function ProgressIndicators() {
     return formatTime(remaining);
   };
 
+  const formatBytes = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  };
+
+  const formatTokens = (tokens: number): string => {
+    if (tokens < 1000) return tokens.toString();
+    if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K`;
+    if (tokens < 1000000000) return `${(tokens / 1000000).toFixed(1)}M`;
+    return `${(tokens / 1000000000).toFixed(2)}B`;
+  };
+
   return (
     <div className="progress-indicators">
       <h3>Training Progress</h3>
 
-      {status.state === 'loading' && loadingMessage && (
-        <div className="loading-message">
-          <div className="loading-spinner" />
-          <span>{loadingMessage}</span>
+      {status.state === 'loading' && (
+        <div className="loading-section">
+          <div className="loading-message">
+            <div className="loading-spinner" />
+            <span>{loadingMessage || 'Loading...'}</span>
+          </div>
+          {loadingProgress && loadingProgress.total_bytes > 0 && (
+            <div className="loading-progress">
+              <div className="progress-bar loading">
+                <div
+                  className="progress-fill"
+                  style={{ width: `${loadingProgress.percent}%` }}
+                />
+              </div>
+              <div className="loading-stats">
+                <span className="loading-stat">
+                  {formatBytes(loadingProgress.bytes_read)} / {formatBytes(loadingProgress.total_bytes)}
+                </span>
+                <span className="loading-stat">
+                  {formatTokens(loadingProgress.tokens)} tokens
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
