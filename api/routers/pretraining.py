@@ -182,7 +182,7 @@ class TrainingManager:
         """Background training coroutine."""
         import torch
         from experiments.pretraining.model import GPTModel
-        from experiments.pretraining.config import get_config
+        from experiments.pretraining.config import get_config, GPTConfig
         from experiments.pretraining.tokenizer import Tokenizer
         from experiments.pretraining.data import create_train_val_dataloaders
         from experiments.pretraining.train import calc_loss_batch, calc_loss_loader, get_lr_scheduler
@@ -233,13 +233,27 @@ class TrainingManager:
                 if not checkpoint_path:
                     raise ValueError(f"Checkpoint not found: {config.resume_from}")
 
-                # Load the checkpoint
-                model, _, metadata = load_checkpoint(checkpoint_path, device=device)
-
-                # Store optimizer state to load after optimizer creation
+                # Load the checkpoint once, extracting optimizer state
+                # (avoid loading the file twice which doubles memory usage)
                 ckpt_data = torch.load(checkpoint_path, map_location=device, weights_only=False)
+
+                ckpt_config = GPTConfig.from_dict(ckpt_data['config'])
+                model = GPTModel(ckpt_config)
+                model.load_state_dict(ckpt_data['model_state_dict'])
+                model.to(device)
+
+                metadata = {
+                    'step': ckpt_data.get('step', 0),
+                    'epoch': ckpt_data.get('epoch', 0),
+                }
+
                 if 'optimizer_state_dict' in ckpt_data:
                     resumed_optimizer_state = ckpt_data['optimizer_state_dict']
+
+                del ckpt_data
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
                 start_step = metadata.get('step', 0)
                 start_epoch = metadata.get('epoch', 0)
