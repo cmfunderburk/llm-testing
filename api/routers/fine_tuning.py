@@ -696,8 +696,24 @@ async def delete_checkpoints():
 
 @router.post("/generate", response_model=GenerateResponse)
 async def generate(request: GenerateRequest):
-    """Generate text using a fine-tuned adapter."""
+    """Generate text using a fine-tuned adapter or the base model."""
     import torch
+
+    # Block generation while training is active (GPU contention)
+    if fine_tuning_manager.status.state in ("running", "loading", "paused"):
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot generate while fine-tuning is active. Stop training first."
+        )
+    try:
+        from .pretraining import training_manager as pt_manager
+        if pt_manager.status.state in ("running", "loading", "paused"):
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot generate while pretraining is active. Stop training first."
+            )
+    except ImportError:
+        pass
 
     loop = asyncio.get_event_loop()
 
@@ -717,6 +733,16 @@ async def generate(request: GenerateRequest):
             model = mgr._gen_model
             tokenizer = mgr._gen_tokenizer
         else:
+            # Clear any previous cached model
+            mgr._gen_model = None
+            mgr._gen_tokenizer = None
+            mgr._gen_adapter_path = None
+
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
             # Load base model
             model, tokenizer = FastLanguageModel.from_pretrained(
                 model_name="unsloth/Qwen2.5-7B-Instruct",
@@ -760,7 +786,10 @@ async def generate(request: GenerateRequest):
 
     try:
         text, tokens_generated = await loop.run_in_executor(None, _generate)
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Generation error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
     return GenerateResponse(
