@@ -26,7 +26,7 @@ echo
 # Check for virtual environment
 if [ ! -d ".venv" ]; then
     echo -e "${RED}Error: Virtual environment not found at .venv${NC}"
-    echo "Create one with: python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+    echo "Create one with: uv sync"
     exit 1
 fi
 

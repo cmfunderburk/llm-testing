@@ -1,0 +1,50 @@
+[project]
+name = "llm-learning-lab"
+version = "0.1.0"
+description = "Hands-on learning environment for building intuition about how LLMs work"
+requires-python = ">=3.11"
+dependencies = [
+    # === API Server ===
+    "fastapi>=0.128.0",
+    "uvicorn[standard]>=0.30.0",
+    "websockets>=13.0",
+
+    # === ML Core ===
+    "torch>=2.9.0",
+    "transformers>=4.52.0",
+    "datasets>=4.0.0",
+    "accelerate>=1.7.0",
+
+    # === Fine-tuning (QLoRA) ===
+    "trl>=0.18.0",
+    "peft>=0.15.0",
+    "bitsandbytes>=0.46.0",
+    "unsloth>=2025.5",
+
+    # === Data & Numerics ===
+    "numpy>=2.0.0",
+    "pandas>=2.0.0",
+    "scipy>=1.14.0",
+
+    # === Tokenization & Visualization ===
+    "tiktoken>=0.12.0",
+    "matplotlib>=3.9.0",
+
+    # === Utilities ===
+    "psutil>=6.0.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.60.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.11.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["api", "experiments"]

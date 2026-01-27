@@ -92,9 +92,7 @@ export function GenerationPanel() {
               <option value="">
                 {isLoadingCheckpoints
                   ? 'Loading...'
-                  : checkpoints.length > 0
-                  ? 'Base model (no adapter)'
-                  : 'No adapters found'}
+                  : 'Base model (no adapter)'}
               </option>
               {checkpoints.map((ckpt) => (
                 <option key={ckpt.id} value={ckpt.path}>
