@@ -272,6 +272,13 @@ def train(model, tokenizer, dataset, output_dir: str = "outputs/basic_qlora"):
     print("=" * 60)
     print(f"  Final training loss: {result.training_loss:.4f}")
 
+    # Save adapter
+    adapter_dir = os.path.join(output_dir, "adapter")
+    os.makedirs(adapter_dir, exist_ok=True)
+    model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
+    print(f"  Adapter saved to: {adapter_dir}")
+
     return trainer, result
 
 

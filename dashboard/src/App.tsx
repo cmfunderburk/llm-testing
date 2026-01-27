@@ -6,8 +6,9 @@
 
 import { useState } from 'react';
 import { TrainingProvider, useTraining } from './context/TrainingContext';
+import { FineTuningProvider } from './context/FineTuningContext';
 import { Layout } from './components/layout';
-import { PretrainingPage, AttentionPage, ProbingPage } from './pages';
+import { PretrainingPage, FineTuningPage, AttentionPage, ProbingPage } from './pages';
 import type { Track } from './types';
 import './App.css';
 
@@ -22,6 +23,8 @@ function AppContent() {
     switch (activeTrack) {
       case 'pretraining':
         return <PretrainingPage />;
+      case 'fine-tuning':
+        return <FineTuningPage />;
       case 'attention':
         return <AttentionPage />;
       case 'probing':
@@ -49,7 +52,9 @@ function AppContent() {
 function App() {
   return (
     <TrainingProvider>
-      <AppContent />
+      <FineTuningProvider>
+        <AppContent />
+      </FineTuningProvider>
     </TrainingProvider>
   );
 }

@@ -397,6 +397,13 @@ def train(model, tokenizer, dataset):
     print("TRAINING COMPLETE")
     print("=" * 60)
 
+    # Save adapter
+    adapter_dir = output_dir / "adapter"
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(str(adapter_dir))
+    tokenizer.save_pretrained(str(adapter_dir))
+    print(f"  Adapter saved to: {adapter_dir}")
+
     return trainer, result, loss_callback
 
 
