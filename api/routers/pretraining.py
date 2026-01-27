@@ -158,6 +158,17 @@ class TrainingManager:
         if self.status.state in ("running", "loading"):
             raise HTTPException(status_code=400, detail="Training already running")
 
+        # GPU contention guard: check if fine-tuning is running
+        try:
+            from .fine_tuning import fine_tuning_manager as ft_manager
+            if ft_manager.status.state in ("running", "loading", "paused"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Fine-tuning is currently active. Stop it before starting pretraining."
+                )
+        except ImportError:
+            pass
+
         # Clear GPU memory from previous runs
         import torch
         import gc

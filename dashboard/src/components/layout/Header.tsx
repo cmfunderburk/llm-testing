@@ -15,6 +15,7 @@ interface HeaderProps {
 export function Header({ activeTrack, isConnected, connectionError }: HeaderProps) {
   const trackLabels: Record<Track, string> = {
     pretraining: 'Pretraining',
+    'fine-tuning': 'Fine-Tuning',
     attention: 'Attention',
     probing: 'Probing',
   };

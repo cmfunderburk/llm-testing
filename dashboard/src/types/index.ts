@@ -6,7 +6,7 @@
 // Common Types
 // =============================================================================
 
-export type Track = 'pretraining' | 'attention' | 'probing';
+export type Track = 'pretraining' | 'fine-tuning' | 'attention' | 'probing';
 
 // =============================================================================
 // Pretraining Types
@@ -220,3 +220,68 @@ export interface LayerDiffResponse {
   per_token_attention_norm: number[];
   per_token_ffn_norm: number[];
 }
+
+// =============================================================================
+// Fine-Tuning Types
+// =============================================================================
+
+export type FineTuningState = 'idle' | 'loading' | 'running' | 'paused' | 'completed' | 'error';
+
+export interface FineTuningConfig {
+  model_name: string;
+  max_seq_length: number;
+  n_examples: number;
+  lora_r: number;
+  lora_alpha: number;
+  lora_dropout: number;
+  learning_rate: number;
+  num_epochs: number;
+  batch_size: number;
+  gradient_accumulation: number;
+  warmup_ratio: number;
+  logging_steps: number;
+  eval_steps: number;
+  save_adapter: boolean;
+  resume_from?: string;
+}
+
+export interface FineTuningStatus {
+  state: FineTuningState;
+  current_step: number;
+  total_steps: number;
+  current_epoch: number;
+  train_loss: number | null;
+  eval_loss: number | null;
+  learning_rate: number | null;
+  elapsed_time: number;
+  config: FineTuningConfig | null;
+  trainable_params: number | null;
+  total_params: number | null;
+}
+
+export interface FineTuningMetrics {
+  type: 'metrics' | 'validation' | 'checkpoint' | 'complete' | 'error' | 'status' | 'heartbeat';
+  step?: number;
+  epoch?: number;
+  train_loss?: number;
+  eval_loss?: number;
+  learning_rate?: number;
+  elapsed_time?: number;
+  message?: string;
+  state?: FineTuningState;
+  total_steps?: number;
+  trainable_params?: number;
+  total_params?: number;
+}
+
+export interface AdapterCheckpointInfo {
+  id: string;
+  path: string;
+  step: number;
+  train_loss: number | null;
+  eval_loss: number | null;
+  timestamp: string | null;
+}
+
+export const FINE_TUNING_MODELS = ['unsloth/Qwen2.5-7B-Instruct'] as const;
+export const LORA_RANKS = [8, 16, 32, 64] as const;

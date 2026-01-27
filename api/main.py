@@ -24,8 +24,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .config import config
-from .routers import pretraining_router, attention_router, probing_router
+from .routers import pretraining_router, attention_router, probing_router, fine_tuning_router
 from .routers.pretraining import websocket_training
+from .routers.fine_tuning import websocket_fine_tuning
 from .services import model_manager
 
 # Configure logging
@@ -55,7 +56,7 @@ class HealthResponse(BaseModel):
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info("Starting LLM Learning Lab API server...")
-    logger.info(f"Available tracks: pretraining, attention, probing")
+    logger.info(f"Available tracks: pretraining, fine-tuning, attention, probing")
     yield
     logger.info("Shutting down API server...")
 
@@ -67,6 +68,12 @@ async def lifespan(app: FastAPI):
     from .routers.pretraining import training_manager
     if training_manager.training_task:
         training_manager.should_stop = True
+        await asyncio.sleep(0.5)
+
+    # Stop any running fine-tuning
+    from .routers.fine_tuning import fine_tuning_manager
+    if fine_tuning_manager.training_task:
+        fine_tuning_manager.control_flags.should_stop = True
         await asyncio.sleep(0.5)
 
 
@@ -85,12 +92,14 @@ for building intuition about how LLMs work.
 ## Tracks
 
 - **Pretraining** (`/api/pretraining/*`): Train GPT models from scratch with real-time metrics
+- **Fine-Tuning** (`/api/fine-tuning/*`): QLoRA fine-tuning with real-time metrics
 - **Attention** (`/api/attention/*`): Extract and visualize attention patterns
 - **Probing** (`/api/probing/*`): Analyze intermediate activations and representations
 
 ## WebSocket
 
-- `/ws/training`: Real-time training metrics stream
+- `/ws/training`: Real-time pretraining metrics stream
+- `/ws/fine-tuning`: Real-time fine-tuning metrics stream
         """,
         version="0.2.0",
         lifespan=lifespan,
@@ -107,6 +116,7 @@ for building intuition about how LLMs work.
 
     # Mount routers
     app.include_router(pretraining_router)
+    app.include_router(fine_tuning_router)
     app.include_router(attention_router)
     app.include_router(probing_router)
 
@@ -127,7 +137,7 @@ async def health_check():
         status="ok",
         timestamp=datetime.now().isoformat(),
         version="0.2.0",
-        tracks=["pretraining", "attention", "probing"],
+        tracks=["pretraining", "fine-tuning", "attention", "probing"],
     )
 
 
@@ -140,6 +150,7 @@ async def root():
         "docs": "/docs",
         "tracks": {
             "pretraining": "/api/pretraining",
+            "fine_tuning": "/api/fine-tuning",
             "attention": "/api/attention",
             "probing": "/api/probing",
         },
@@ -154,6 +165,12 @@ async def root():
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time training metrics."""
     await websocket_training(websocket)
+
+
+@app.websocket("/ws/fine-tuning")
+async def websocket_fine_tuning_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time fine-tuning metrics."""
+    await websocket_fine_tuning(websocket)
 
 
 # =============================================================================

@@ -234,6 +234,13 @@ def run_single_rank(rank, dataset, output_base):
     result = trainer.train()
     training_time = time.time() - start_time
 
+    # Save adapter
+    adapter_dir = output_dir / "adapter"
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(str(adapter_dir))
+    tokenizer.save_pretrained(str(adapter_dir))
+    print(f"  Adapter saved to: {adapter_dir}")
+
     # Save this run's data
     run_data = {
         "rank": rank,

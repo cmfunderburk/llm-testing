@@ -15,6 +15,7 @@ interface TrackInfo {
 
 const tracks: TrackInfo[] = [
   { id: 'pretraining', label: 'Pretraining', icon: 'P', description: 'Train GPT from scratch' },
+  { id: 'fine-tuning', label: 'Fine-Tuning', icon: 'F', description: 'QLoRA fine-tuning' },
   { id: 'attention', label: 'Attention', icon: 'A', description: 'Visualize attention patterns' },
   { id: 'probing', label: 'Probing', icon: 'R', description: 'Analyze representations' },
 ];
