@@ -96,13 +96,31 @@ export function TrainingControls() {
     fetchCheckpoints();
   }, []);
 
-  // Auto-update context_length when model size changes (only if not resuming)
+  // Sync local config from ongoing training run's config (e.g., after page reload)
   useEffect(() => {
-    if (!config.resume_from) {
+    // Only sync if training is active and has a config
+    const isActiveRun = status.state === 'running' || status.state === 'loading' || status.state === 'paused';
+    if (!isActiveRun || !status.config) return;
+
+    // Update local config to match the running training
+    setConfig(status.config);
+
+    // Also sync the selectedDataset to match corpus
+    const matchingDataset = DATASETS.find(d => d.corpus === status.config!.corpus);
+    if (matchingDataset) {
+      setSelectedDataset(matchingDataset);
+    }
+  }, [status.state, status.config]);
+
+  // Auto-update context_length when model size changes (only if not resuming and not in active run)
+  useEffect(() => {
+    // Don't auto-update during an active training run - respect the synced config
+    const isActiveRun = status.state === 'running' || status.state === 'loading' || status.state === 'paused';
+    if (!config.resume_from && !isActiveRun) {
       const defaultContextLength = DEFAULT_CONTEXT_LENGTHS[config.config_name] || 256;
       setConfig(prev => ({ ...prev, context_length: defaultContextLength }));
     }
-  }, [config.config_name, config.resume_from]);
+  }, [config.config_name, config.resume_from, status.state]);
 
   // Fetch VRAM estimate when config changes
   useEffect(() => {
