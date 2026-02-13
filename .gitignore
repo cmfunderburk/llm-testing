@@ -73,3 +73,18 @@ unsloth_compiled_cache/
 
 # Local prepared corpora
 experiments/pretraining/corpus/wikipedia-ga-intros.txt
+
+# Private/local documentation and agent notes
+.old_docs/
+.claude/
+AGENTS
+AGENTS.*
+CLAUDE
+CLAUDE.*
+DESLOP_EXPERIMENT_NOTES
+DESLOP_EXPERIMENT_NOTES.*
+unsloth_finetune_design_v2-refined
+unsloth_finetune_design_v2-refined.*
+
+# Docs folder (declutter public repo)
+docs/
