@@ -74,6 +74,7 @@ const initialState: TrainingContextState = {
   connectionError: null,
   status: {
     state: 'idle',
+    run_id: null,
     current_step: 0,
     current_epoch: 0,
     total_steps: 0,
@@ -233,6 +234,36 @@ export function TrainingProvider({ children }: TrainingProviderProps) {
         }
         break;
 
+      case 'validation':
+        if (data.val_loss !== undefined) {
+          dispatch({
+            type: 'SET_STATUS',
+            payload: {
+              ...statusRef.current,
+              ...(data.run_id !== undefined && { run_id: data.run_id }),
+              ...(data.step !== undefined && { current_step: data.step }),
+              ...(data.epoch !== undefined && { current_epoch: data.epoch }),
+              val_loss: data.val_loss,
+            },
+          });
+        }
+        if (data.step !== undefined) {
+          dispatch({
+            type: 'ADD_METRICS',
+            payload: {
+              step: data.step,
+              epoch: data.epoch || 0,
+              train_loss: data.train_loss ?? statusRef.current.train_loss ?? 0,
+              val_loss: data.val_loss,
+              learning_rate: data.learning_rate || 0,
+              tokens_seen: data.tokens_seen || 0,
+              tokens_per_sec: data.tokens_per_sec || 0,
+              elapsed_time: data.elapsed_time || statusRef.current.elapsed_time || 0,
+            },
+          });
+        }
+        break;
+
       case 'generation':
         if (data.text) {
           dispatch({
@@ -253,6 +284,7 @@ export function TrainingProvider({ children }: TrainingProviderProps) {
             payload: {
               ...statusRef.current,
               state: data.state,
+              ...(data.run_id !== undefined && { run_id: data.run_id }),
               ...(data.total_steps !== undefined && { total_steps: data.total_steps }),
             },
           });
@@ -287,14 +319,24 @@ export function TrainingProvider({ children }: TrainingProviderProps) {
       case 'complete':
         dispatch({
           type: 'SET_STATUS',
-          payload: { ...statusRef.current, state: 'completed' },
+          payload: {
+            ...statusRef.current,
+            state: 'completed',
+            ...(data.run_id !== undefined && { run_id: data.run_id }),
+            ...(data.final_step !== undefined && { current_step: data.final_step }),
+            ...(data.final_train_loss !== undefined && { train_loss: data.final_train_loss }),
+          },
         });
         break;
 
       case 'error':
         dispatch({
           type: 'SET_STATUS',
-          payload: { ...statusRef.current, state: 'error' },
+          payload: {
+            ...statusRef.current,
+            state: 'error',
+            ...(data.run_id !== undefined && { run_id: data.run_id }),
+          },
         });
         dispatch({ type: 'SET_ERROR', payload: data.message || 'Training error' });
         break;
@@ -449,6 +491,7 @@ export function TrainingProvider({ children }: TrainingProviderProps) {
 // Hook
 // =============================================================================
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useTraining(): TrainingContextValue {
   const context = useContext(TrainingContext);
   if (!context) {

@@ -6,14 +6,72 @@ Extracted from experiments/pretraining/api/main.py
 """
 
 import asyncio
+import json
 import logging
 import math
-from typing import Optional, List, Dict, Any
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, List, Dict, Any, Literal
+from contextlib import nullcontext
+from dataclasses import replace
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
+
+RUNS_BASE_DIR = Path("outputs/pretraining/runs")
+RUN_META_FILENAME = "run_meta.json"
+RUN_HISTORY_FILENAME = "history.jsonl"
+
+
+def _utcnow_iso() -> str:
+    """UTC timestamp without timezone offset for stable JSON snapshots."""
+    return datetime.utcnow().isoformat()
+
+
+def _is_safe_run_id(run_id: str) -> bool:
+    """Guard against path traversal in run ID lookups."""
+    return bool(re.match(r"^[A-Za-z0-9._-]+$", run_id))
+
+
+def _run_dir(run_id: str) -> Path:
+    return RUNS_BASE_DIR / run_id
+
+
+def _run_meta_path(run_id: str) -> Path:
+    return _run_dir(run_id) / RUN_META_FILENAME
+
+
+def _run_history_path(run_id: str) -> Path:
+    return _run_dir(run_id) / RUN_HISTORY_FILENAME
+
+
+def _read_run_meta(run_id: str) -> Optional[Dict[str, Any]]:
+    path = _run_meta_path(run_id)
+    if not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_run_meta(run_id: str, meta: Dict[str, Any]):
+    run_dir = _run_dir(run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = _run_meta_path(run_id)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+
+
+def _append_run_history(run_id: str, event: Dict[str, Any]):
+    run_dir = _run_dir(run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = _run_history_path(run_id)
+    payload = dict(event)
+    payload.setdefault("timestamp", _utcnow_iso())
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload) + "\n")
 
 
 def _sanitize_float(value: Optional[float]) -> Optional[float]:
@@ -35,15 +93,21 @@ class TrainingConfig(BaseModel):
     val_corpus: Optional[str] = None  # Separate validation corpus (e.g., 'pg19_validation')
     epochs: int = 10
     batch_size: int = 4
+    grad_accum_steps: int = 1
     learning_rate: float = 3e-4
     warmup_steps: int = 100
     save_checkpoints: bool = False
     context_length: Optional[int] = None  # Optional override for model's default
     resume_from: Optional[str] = None  # checkpoint_id to resume from
+    attention_impl: Literal["manual", "sdpa"] = "manual"
+    precision: Literal["fp32", "bf16", "fp16"] = "fp32"
+    gradient_checkpointing: bool = False
+    tie_embeddings: bool = False
 
 
 class TrainingStatus(BaseModel):
     state: str  # "idle", "running", "paused", "completed", "error"
+    run_id: Optional[str] = None
     current_step: int = 0
     current_epoch: int = 0
     total_steps: int = 0
@@ -115,6 +179,133 @@ class SaveNowResponse(BaseModel):
     step: int
 
 
+class RunMetric(BaseModel):
+    step: int
+    epoch: int
+    train_loss: Optional[float] = None
+    val_loss: Optional[float] = None
+    learning_rate: Optional[float] = None
+    tokens_seen: Optional[int] = None
+    tokens_per_sec: Optional[float] = None
+    elapsed_time: Optional[float] = None
+
+
+class PretrainingRunSummary(BaseModel):
+    run_id: str
+    state: str
+    created_at: str
+    updated_at: str
+    completed_at: Optional[str] = None
+    current_step: int = 0
+    total_steps: int = 0
+    tokens_seen: int = 0
+    final_train_loss: Optional[float] = None
+    final_val_loss: Optional[float] = None
+    config: Optional[TrainingConfig] = None
+
+
+class PretrainingRunDetail(PretrainingRunSummary):
+    metrics: List[RunMetric] = Field(default_factory=list)
+    generations: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _load_run_summary(run_id: str) -> Optional[PretrainingRunSummary]:
+    meta = _read_run_meta(run_id)
+    if meta is None:
+        return None
+    try:
+        return PretrainingRunSummary.model_validate(meta)
+    except ValidationError as e:
+        logger.warning("Skipping invalid run metadata for %s: %s", run_id, e)
+        return None
+
+
+def _list_run_summaries(limit: int = 100) -> List[PretrainingRunSummary]:
+    if not RUNS_BASE_DIR.exists():
+        return []
+
+    summaries: List[PretrainingRunSummary] = []
+    for run_path in RUNS_BASE_DIR.iterdir():
+        if not run_path.is_dir():
+            continue
+        run_id = run_path.name
+        if not _is_safe_run_id(run_id):
+            continue
+        summary = _load_run_summary(run_id)
+        if summary is not None:
+            summaries.append(summary)
+
+    summaries.sort(key=lambda s: s.updated_at, reverse=True)
+    return summaries[:limit]
+
+
+def _load_run_detail(run_id: str) -> Optional[PretrainingRunDetail]:
+    summary = _load_run_summary(run_id)
+    if summary is None:
+        return None
+
+    metrics_by_step: Dict[int, RunMetric] = {}
+    generations: List[Dict[str, Any]] = []
+
+    history_path = _run_history_path(run_id)
+    if history_path.exists():
+        with history_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = event.get("type")
+                if event_type in {"metrics", "validation"}:
+                    step = _safe_int(event.get("step"), 0)
+                    epoch = _safe_int(event.get("epoch"), 0)
+                    metric = metrics_by_step.get(step)
+                    if metric is None:
+                        metric = RunMetric(step=step, epoch=epoch)
+                    else:
+                        metric.epoch = max(metric.epoch, epoch)
+                    if "train_loss" in event:
+                        metric.train_loss = _sanitize_float(event.get("train_loss"))
+                    if "val_loss" in event:
+                        metric.val_loss = _sanitize_float(event.get("val_loss"))
+                    if "learning_rate" in event:
+                        metric.learning_rate = _sanitize_float(event.get("learning_rate"))
+                    if "tokens_seen" in event:
+                        metric.tokens_seen = _safe_int(event.get("tokens_seen"), metric.tokens_seen or 0)
+                    if "tokens_per_sec" in event:
+                        metric.tokens_per_sec = _sanitize_float(event.get("tokens_per_sec"))
+                    if "elapsed_time" in event:
+                        metric.elapsed_time = _sanitize_float(event.get("elapsed_time"))
+                    metrics_by_step[step] = metric
+                elif event_type == "generation" and event.get("text"):
+                    generations.append(
+                        {
+                            "step": _safe_int(event.get("step"), 0),
+                            "epoch": _safe_int(event.get("epoch"), 0),
+                            "text": event.get("text", ""),
+                            "timestamp": event.get("timestamp"),
+                        }
+                    )
+
+    metrics = [metrics_by_step[step] for step in sorted(metrics_by_step.keys())]
+    return PretrainingRunDetail(
+        **summary.model_dump(),
+        metrics=metrics,
+        generations=generations,
+    )
+
+
 # =============================================================================
 # Training Manager
 # =============================================================================
@@ -140,6 +331,88 @@ class TrainingManager:
         # Progress tracking for data loading (shared with executor thread)
         self._loading_progress: Dict[str, Any] = {}
 
+    def _create_run_record(self, config: TrainingConfig) -> str:
+        """Create a persistent run directory and initial metadata."""
+        RUNS_BASE_DIR.mkdir(parents=True, exist_ok=True)
+        corpus_slug = re.sub(r"[^A-Za-z0-9]+", "-", config.corpus).strip("-").lower() or "corpus"
+        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        base_run_id = f"{config.config_name}_{corpus_slug}_{ts}"
+        run_id = base_run_id
+        suffix = 1
+        while _run_dir(run_id).exists():
+            run_id = f"{base_run_id}_{suffix}"
+            suffix += 1
+
+        now = _utcnow_iso()
+        summary = PretrainingRunSummary(
+            run_id=run_id,
+            state="loading",
+            created_at=now,
+            updated_at=now,
+            current_step=0,
+            total_steps=0,
+            tokens_seen=0,
+            final_train_loss=None,
+            final_val_loss=None,
+            config=config,
+        )
+        _write_run_meta(run_id, summary.model_dump(mode="json"))
+        _append_run_history(
+            run_id,
+            {
+                "type": "status",
+                "state": "loading",
+                "message": "Run created",
+                "step": 0,
+                "epoch": 0,
+            },
+        )
+        return run_id
+
+    def _update_run_meta(self, run_id: Optional[str], **updates):
+        if not run_id:
+            return
+        meta = _read_run_meta(run_id)
+        if meta is None:
+            return
+        if "final_train_loss" in updates:
+            updates["final_train_loss"] = _sanitize_float(updates["final_train_loss"])
+        if "final_val_loss" in updates:
+            updates["final_val_loss"] = _sanitize_float(updates["final_val_loss"])
+        meta.update(updates)
+        meta["updated_at"] = _utcnow_iso()
+        _write_run_meta(run_id, meta)
+
+    def _sync_run_meta_progress(self):
+        """Persist current status snapshot to run metadata."""
+        run_id = self.status.run_id
+        self._update_run_meta(
+            run_id,
+            state=self.status.state,
+            current_step=self.status.current_step,
+            total_steps=self.status.total_steps,
+            tokens_seen=self.status.tokens_seen,
+            final_train_loss=self.status.train_loss,
+            final_val_loss=self.status.val_loss,
+        )
+
+    def _finalize_run(self, state: str, error_message: Optional[str] = None):
+        run_id = self.status.run_id
+        if not run_id:
+            return
+        completion_payload: Dict[str, Any] = {
+            "state": state,
+            "completed_at": _utcnow_iso(),
+            "current_step": self.status.current_step,
+            "total_steps": self.status.total_steps,
+            "tokens_seen": self.status.tokens_seen,
+            "final_train_loss": self.status.train_loss,
+            "final_val_loss": self.status.val_loss,
+        }
+        if error_message:
+            completion_payload["error_message"] = error_message
+        self._update_run_meta(run_id, **completion_payload)
+
     async def broadcast_metrics(self, metrics: Dict[str, Any]):
         """Send metrics to all connected WebSocket clients."""
         disconnected = []
@@ -152,6 +425,9 @@ class TrainingManager:
         for ws in disconnected:
             if ws in self.websocket_clients:
                 self.websocket_clients.remove(ws)
+
+        if self.status.run_id:
+            _append_run_history(self.status.run_id, metrics)
 
     async def start_training(self, config: TrainingConfig):
         """Start training in background."""
@@ -180,12 +456,15 @@ class TrainingManager:
         self.should_stop = False
         self.should_pause = False
         self.should_save_now = False
+        run_id = self._create_run_record(config)
         self.status = TrainingStatus(
             state="loading",  # Start in loading state until training loop begins
+            run_id=run_id,
             config=config,
         )
         self.metrics_history = []
         self._training_config = config
+        self._sync_run_meta_progress()
 
         self.training_task = asyncio.create_task(self._run_training(config))
 
@@ -199,14 +478,18 @@ class TrainingManager:
         from experiments.pretraining.data import create_train_val_dataloaders
         from experiments.pretraining.train import calc_loss_batch, calc_loss_loader, get_lr_scheduler
         from experiments.pretraining.generate import generate_text
-        from experiments.pretraining.checkpoint import save_checkpoint, load_checkpoint, list_checkpoints
+        from experiments.pretraining.checkpoint import save_checkpoint, list_checkpoints
         import time
+
+        run_id = self.status.run_id
+        run_finalized = False
 
         try:
             # Send loading status updates
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "loading",
+                "run_id": run_id,
                 "message": "Initializing...",
             })
 
@@ -217,6 +500,14 @@ class TrainingManager:
             # Use provided context_length or fall back to model default
             effective_context_length = config.context_length if config.context_length else model_config.context_length
             self._effective_context_length = effective_context_length
+            model_config = replace(
+                model_config,
+                context_length=effective_context_length,
+                attention_impl=config.attention_impl,
+                tie_embeddings=config.tie_embeddings,
+                gradient_checkpointing=config.gradient_checkpointing,
+                precision=config.precision,
+            )
 
             # Handle resume from checkpoint
             start_step = 0
@@ -227,6 +518,7 @@ class TrainingManager:
                 await self.broadcast_metrics({
                     "type": "status",
                     "state": "loading",
+                    "run_id": run_id,
                     "message": f"Loading checkpoint {config.resume_from}...",
                 })
 
@@ -250,6 +542,14 @@ class TrainingManager:
                 ckpt_data = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
                 ckpt_config = GPTConfig.from_dict(ckpt_data['config'])
+                ckpt_config = replace(
+                    ckpt_config,
+                    attention_impl=config.attention_impl,
+                    tie_embeddings=config.tie_embeddings,
+                    gradient_checkpointing=config.gradient_checkpointing,
+                    precision=config.precision,
+                )
+                model_config = ckpt_config
                 model = GPTModel(ckpt_config)
                 model.load_state_dict(ckpt_data['model_state_dict'])
                 model.to(device)
@@ -289,6 +589,7 @@ class TrainingManager:
                 await self.broadcast_metrics({
                     "type": "status",
                     "state": "loading",
+                    "run_id": run_id,
                     "message": f"Resumed from step {start_step}, epoch {start_epoch}",
                 })
             else:
@@ -296,6 +597,7 @@ class TrainingManager:
                 await self.broadcast_metrics({
                     "type": "status",
                     "state": "loading",
+                    "run_id": run_id,
                     "message": f"Creating {config.config_name} model...",
                 })
 
@@ -310,6 +612,7 @@ class TrainingManager:
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "loading",
+                "run_id": run_id,
                 "message": f"Loading corpus '{config.corpus}'...",
             })
 
@@ -393,6 +696,7 @@ class TrainingManager:
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "loading",
+                "run_id": run_id,
                 "message": "Model ready. Starting training...",
             })
 
@@ -406,8 +710,19 @@ class TrainingManager:
             if resumed_optimizer_state is not None:
                 optimizer.load_state_dict(resumed_optimizer_state)
 
-            total_steps = len(train_loader) * config.epochs
+            grad_accum_steps = max(1, config.grad_accum_steps)
+            updates_per_epoch = max(1, math.ceil(len(train_loader) / grad_accum_steps))
+            total_steps = updates_per_epoch * config.epochs
             scheduler = get_lr_scheduler(optimizer, config.warmup_steps, total_steps)
+
+            # Configure mixed precision behavior.
+            if device.type == "cuda":
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.set_float32_matmul_precision("high")
+            use_amp = device.type == "cuda" and config.precision in ("bf16", "fp16")
+            use_grad_scaler = device.type == "cuda" and config.precision == "fp16"
+            amp_dtype = torch.bfloat16 if config.precision == "bf16" else torch.float16
+            scaler = torch.cuda.amp.GradScaler(enabled=use_grad_scaler)
 
             # If resuming, advance scheduler to current step
             if start_step > 0:
@@ -421,6 +736,7 @@ class TrainingManager:
                 scheduler.base_lrs = [config.learning_rate for _ in scheduler.base_lrs]
 
             self.status.total_steps = total_steps
+            self._sync_run_meta_progress()
 
             # Store references for save-now endpoint
             self._model = model
@@ -441,14 +757,17 @@ class TrainingManager:
 
             # Now actually starting training - update state
             self.status.state = "running"
+            self._sync_run_meta_progress()
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "running",
+                "run_id": run_id,
                 "total_steps": total_steps,
                 "resumed_from_step": start_step if start_step > 0 else None,
             })
 
             model.train()
+            optimizer.zero_grad(set_to_none=True)
             for epoch in range(config.epochs):
                 # Skip epochs that were completed before resume
                 if epoch < start_epoch:
@@ -458,24 +777,45 @@ class TrainingManager:
                 self._current_epoch = epoch + 1
 
                 steps_in_epoch = 0
-                for batch in train_loader:
+                accumulated_micro_steps = 0
+                accumulated_loss = 0.0
+                micro_batches_per_epoch = len(train_loader)
+                for batch_idx, batch in enumerate(train_loader):
                     # If resuming mid-epoch, skip batches until we reach start_step
                     if config.resume_from and epoch == start_epoch:
                         steps_in_epoch += 1
-                        # Calculate which batch we should resume from
-                        batches_per_epoch = len(train_loader)
-                        start_batch_in_epoch = start_step - (start_epoch * batches_per_epoch)
-                        if steps_in_epoch <= start_batch_in_epoch:
+                        # start_step is tracked as optimizer updates, so map to micro-batches.
+                        start_update_in_epoch = start_step - (start_epoch * updates_per_epoch)
+                        start_micro_batch_in_epoch = max(0, start_update_in_epoch * grad_accum_steps)
+                        if steps_in_epoch <= start_micro_batch_in_epoch:
                             continue
 
                     if self.should_stop:
                         self.status.state = "completed"
+                        self._sync_run_meta_progress()
+                        await self.broadcast_metrics({
+                            "type": "status",
+                            "state": "completed",
+                            "run_id": run_id,
+                            "message": "Training stopped",
+                        })
+                        self._finalize_run("completed")
+                        run_finalized = True
                         return
 
                     while self.should_pause:
                         await asyncio.sleep(0.1)
                         if self.should_stop:
                             self.status.state = "completed"
+                            self._sync_run_meta_progress()
+                            await self.broadcast_metrics({
+                                "type": "status",
+                                "state": "completed",
+                                "run_id": run_id,
+                                "message": "Training stopped",
+                            })
+                            self._finalize_run("completed")
+                            run_finalized = True
                             return
 
                     # Handle manual checkpoint save
@@ -506,28 +846,64 @@ class TrainingManager:
                     input_ids = batch['input_ids']
                     labels = batch['labels']
 
-                    optimizer.zero_grad()
-                    loss = calc_loss_batch(input_ids, labels, model, device)
-                    loss.backward()
+                    amp_context = (
+                        torch.autocast(device_type="cuda", dtype=amp_dtype)
+                        if use_amp
+                        else nullcontext()
+                    )
+                    with amp_context:
+                        loss = calc_loss_batch(input_ids, labels, model, device)
+
+                    accumulated_micro_steps += 1
+                    accumulated_loss += loss.item()
+                    tokens_seen += input_ids.numel()
+
+                    loss_for_backward = loss / grad_accum_steps
+                    if use_grad_scaler:
+                        scaler.scale(loss_for_backward).backward()
+                    else:
+                        loss_for_backward.backward()
+
+                    should_step = (
+                        accumulated_micro_steps >= grad_accum_steps
+                        or batch_idx == micro_batches_per_epoch - 1
+                    )
+                    if not should_step:
+                        await asyncio.sleep(0)
+                        continue
+
+                    if use_grad_scaler:
+                        scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                    optimizer.step()
+
+                    if use_grad_scaler:
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
                     scheduler.step()
+                    optimizer.zero_grad(set_to_none=True)
+
+                    step_loss = accumulated_loss / max(1, accumulated_micro_steps)
+                    accumulated_micro_steps = 0
+                    accumulated_loss = 0.0
 
                     global_step += 1
-                    tokens_seen += input_ids.numel()
                     elapsed = time.time() - start_time
 
                     self.status.current_step = global_step
                     self.status.tokens_seen = tokens_seen
                     self.status.elapsed_time = elapsed
-                    self.status.train_loss = loss.item()
+                    self.status.train_loss = step_loss
+                    if global_step % 10 == 0:
+                        self._sync_run_meta_progress()
 
                     if global_step % 50 == 0:
                         metrics = {
                             "type": "metrics",
                             "step": global_step,
                             "epoch": epoch + 1,
-                            "train_loss": loss.item(),
+                            "train_loss": step_loss,
                             "learning_rate": optimizer.param_groups[0]['lr'],
                             "tokens_seen": tokens_seen,
                             "tokens_per_sec": tokens_seen / elapsed if elapsed > 0 else 0,
@@ -640,8 +1016,12 @@ class TrainingManager:
             )
 
             self.status.state = "completed"
+            self._sync_run_meta_progress()
+            self._finalize_run("completed")
+            run_finalized = True
             await self.broadcast_metrics({
                 "type": "complete",
+                "run_id": run_id,
                 "final_step": global_step,
                 "final_train_loss": self.status.train_loss,
                 "checkpoint_path": str(final_checkpoint_path),
@@ -650,11 +1030,17 @@ class TrainingManager:
         except Exception as e:
             logger.error(f"Training error: {e}")
             self.status.state = "error"
+            self._sync_run_meta_progress()
+            self._finalize_run("error", str(e))
+            run_finalized = True
             await self.broadcast_metrics({
                 "type": "error",
+                "run_id": run_id,
                 "message": str(e),
             })
         finally:
+            if not run_finalized and self.status.state in ("completed", "error"):
+                self._finalize_run(self.status.state, "Unknown failure" if self.status.state == "error" else None)
             # Clean up references
             self._model = None
             self._optimizer = None
@@ -673,6 +1059,18 @@ class TrainingManager:
             raise HTTPException(status_code=400, detail="Training not running")
         self.should_pause = True
         self.status.state = "paused"
+        self._sync_run_meta_progress()
+        if self.status.run_id:
+            _append_run_history(
+                self.status.run_id,
+                {
+                    "type": "status",
+                    "state": "paused",
+                    "run_id": self.status.run_id,
+                    "step": self.status.current_step,
+                    "epoch": self.status.current_epoch,
+                },
+            )
 
     def resume_training(self):
         """Resume training."""
@@ -680,6 +1078,18 @@ class TrainingManager:
             raise HTTPException(status_code=400, detail="Training not paused")
         self.should_pause = False
         self.status.state = "running"
+        self._sync_run_meta_progress()
+        if self.status.run_id:
+            _append_run_history(
+                self.status.run_id,
+                {
+                    "type": "status",
+                    "state": "running",
+                    "run_id": self.status.run_id,
+                    "step": self.status.current_step,
+                    "epoch": self.status.current_epoch,
+                },
+            )
 
     def stop_training(self):
         """Stop training."""
@@ -688,6 +1098,19 @@ class TrainingManager:
         self.should_stop = True
         self.should_pause = False
         self.status.state = "completed"
+        self._sync_run_meta_progress()
+        if self.status.run_id:
+            _append_run_history(
+                self.status.run_id,
+                {
+                    "type": "status",
+                    "state": "completed",
+                    "run_id": self.status.run_id,
+                    "message": "Stop requested",
+                    "step": self.status.current_step,
+                    "epoch": self.status.current_epoch,
+                },
+            )
 
     def trigger_save_now(self):
         """Trigger immediate checkpoint save."""
@@ -713,8 +1136,36 @@ async def get_training_status():
     return training_manager.status
 
 
+@router.get("/runs", response_model=List[PretrainingRunSummary])
+async def list_pretraining_runs(limit: int = 50):
+    """List persisted pretraining runs (most recently updated first)."""
+    safe_limit = max(1, min(limit, 500))
+    return _list_run_summaries(limit=safe_limit)
+
+
+@router.get("/runs/{run_id}", response_model=PretrainingRunDetail)
+async def get_pretraining_run(run_id: str):
+    """Load full details for a persisted pretraining run."""
+    if not _is_safe_run_id(run_id):
+        raise HTTPException(status_code=400, detail="Invalid run ID")
+
+    detail = _load_run_detail(run_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return detail
+
+
 @router.get("/estimate-vram", response_model=VRAMEstimate)
-async def estimate_vram(config_name: str = "nano", batch_size: int = 4, context_length: Optional[int] = None):
+async def estimate_vram(
+    config_name: str = "nano",
+    batch_size: int = 4,
+    context_length: Optional[int] = None,
+    precision: Literal["fp32", "bf16", "fp16"] = "fp32",
+    optimizer: Literal["adamw", "adamw_8bit", "paged_adamw_8bit"] = "adamw",
+    attention_impl: Literal["manual", "sdpa"] = "manual",
+    gradient_checkpointing: bool = False,
+    tie_embeddings: bool = False,
+):
     """Estimate VRAM requirements for a given configuration."""
     from experiments.pretraining.config import get_config
 
@@ -729,17 +1180,38 @@ async def estimate_vram(config_name: str = "nano", batch_size: int = 4, context_
     # Create a modified config if context_length differs from default
     if effective_context_length != model_config.context_length:
         # Create a copy with the new context_length for estimation
-        from dataclasses import replace
         model_config = replace(model_config, context_length=effective_context_length)
 
-    estimate = model_config.estimate_vram_mb(batch_size)
+    estimate = model_config.estimate_vram_mb(
+        batch_size=batch_size,
+        precision=precision,
+        optimizer=optimizer,
+        attention_impl=attention_impl,
+        gradient_checkpointing=gradient_checkpointing,
+        tie_embeddings=tie_embeddings,
+    )
 
     # Add warning if estimated VRAM is high
     warning = None
-    if estimate["total_gb"] > 14:
-        warning = "May exceed 16GB VRAM. Consider reducing batch size."
-    elif estimate["total_gb"] > 10:
-        warning = "High VRAM usage. Monitor for OOM errors."
+    if estimate["total_gb"] > 15.5:
+        warning = "Likely to exceed 16GB VRAM. Reduce micro-batch or context length."
+    elif estimate["total_gb"] > 13.5:
+        warning = "Near 16GB limit; OOM risk is high."
+    elif estimate["total_gb"] > 10.5:
+        warning = "High VRAM usage; monitor for OOM errors."
+
+    # Provide actionable guidance for common high-memory configurations.
+    tips = []
+    if attention_impl == "manual" and effective_context_length >= 1024:
+        tips.append("set attention_impl=sdpa")
+    if not gradient_checkpointing and estimate["total_gb"] > 10.5:
+        tips.append("enable gradient_checkpointing")
+    if precision == "fp32" and estimate["total_gb"] > 10.5:
+        tips.append("use bf16 or fp16 mixed precision")
+    if optimizer == "adamw" and estimate["total_gb"] > 10.5:
+        tips.append("estimate with adamw_8bit or paged_adamw_8bit")
+    if warning and tips:
+        warning = f"{warning} Suggested: {', '.join(tips[:2])}."
 
     return VRAMEstimate(**estimate, warning=warning)
 
@@ -896,7 +1368,6 @@ async def delete_checkpoints(config_name: str = "nano", keep_latest: bool = True
         config_name: Name of model config ('nano', 'small', 'medium')
         keep_latest: If True, keeps checkpoint_latest.pt and checkpoint_final.pt
     """
-    from pathlib import Path
     from experiments.pretraining.checkpoint import DEFAULT_CHECKPOINT_DIR
 
     base_dir = DEFAULT_CHECKPOINT_DIR
@@ -936,7 +1407,6 @@ async def delete_checkpoints(config_name: str = "nano", keep_latest: bool = True
 @router.delete("/checkpoints/all", response_model=DeleteCheckpointsResponse)
 async def delete_all_checkpoints():
     """Delete ALL checkpoints across all configurations."""
-    from pathlib import Path
     import shutil
     from experiments.pretraining.checkpoint import DEFAULT_CHECKPOINT_DIR
 
@@ -1051,6 +1521,7 @@ async def websocket_training(websocket: WebSocket):
         await websocket.send_json({
             "type": "status",
             "state": training_manager.status.state,
+            "run_id": training_manager.status.run_id,
             "current_step": training_manager.status.current_step,
             "total_steps": training_manager.status.total_steps,
         })

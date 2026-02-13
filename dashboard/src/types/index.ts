@@ -13,6 +13,8 @@ export type Track = 'pretraining' | 'fine-tuning' | 'attention' | 'probing';
 // =============================================================================
 
 export type TrainingState = 'idle' | 'loading' | 'running' | 'paused' | 'completed' | 'error';
+export type PretrainingAttentionImpl = 'manual' | 'sdpa';
+export type PretrainingPrecision = 'fp32' | 'bf16' | 'fp16';
 
 export interface TrainingConfig {
   config_name: string;
@@ -20,15 +22,21 @@ export interface TrainingConfig {
   val_corpus?: string;  // Separate validation corpus (e.g., 'pg19_validation')
   epochs: number;
   batch_size: number;
+  grad_accum_steps: number;
   learning_rate: number;
   warmup_steps: number;
   save_checkpoints: boolean;
   context_length?: number;  // Optional override for model's default
   resume_from?: string;  // checkpoint_id to resume from
+  attention_impl: PretrainingAttentionImpl;
+  precision: PretrainingPrecision;
+  gradient_checkpointing: boolean;
+  tie_embeddings: boolean;
 }
 
 export interface TrainingStatus {
   state: TrainingState;
+  run_id?: string | null;
   current_step: number;
   current_epoch: number;
   total_steps: number;
@@ -40,7 +48,8 @@ export interface TrainingStatus {
 }
 
 export interface TrainingMetrics {
-  type: 'metrics' | 'generation' | 'complete' | 'error' | 'status' | 'heartbeat' | 'loading_progress';
+  type: 'metrics' | 'validation' | 'generation' | 'checkpoint' | 'complete' | 'error' | 'warning' | 'status' | 'heartbeat' | 'loading_progress';
+  run_id?: string;
   step?: number;
   epoch?: number;
   train_loss?: number;
@@ -53,6 +62,13 @@ export interface TrainingMetrics {
   message?: string;  // Loading/error messages
   state?: TrainingState;
   total_steps?: number;
+  resumed_from_step?: number | null;
+  final_step?: number;
+  final_train_loss?: number;
+  checkpoint_path?: string;
+  path?: string;
+  manual?: boolean;
+  percentage?: number;
   // Loading progress fields
   phase?: string;
   bytes_read?: number;
@@ -72,6 +88,41 @@ export interface CheckpointInfo {
   corpus?: string;
   batch_size?: number;
   context_length?: number;
+}
+
+export interface RunMetric {
+  step: number;
+  epoch: number;
+  train_loss: number | null;
+  val_loss: number | null;
+  learning_rate: number | null;
+  tokens_seen: number | null;
+  tokens_per_sec: number | null;
+  elapsed_time: number | null;
+}
+
+export interface PretrainingRunSummary {
+  run_id: string;
+  state: TrainingState;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  current_step: number;
+  total_steps: number;
+  tokens_seen: number;
+  final_train_loss: number | null;
+  final_val_loss: number | null;
+  config: TrainingConfig | null;
+}
+
+export interface PretrainingRunDetail extends PretrainingRunSummary {
+  metrics: RunMetric[];
+  generations: {
+    step: number;
+    epoch: number;
+    text: string;
+    timestamp?: string | null;
+  }[];
 }
 
 export interface GenerateRequest {
@@ -228,6 +279,28 @@ export interface LayerDiffResponse {
 // =============================================================================
 
 export type FineTuningState = 'idle' | 'loading' | 'running' | 'paused' | 'completed' | 'error';
+export type FineTuningOptimizer = 'adamw_8bit' | 'paged_adamw_8bit' | 'adamw_torch';
+
+export interface FineTuningModelOption {
+  name: string;
+  hf_id: string;
+  family: string;
+  params_billion: number;
+  recommended_max_seq: number;
+  recommended_lora_r: number;
+  tags: string[];
+}
+
+export interface FineTuningVRAMEstimate {
+  model_mb: number;
+  lora_mb: number;
+  optimizer_mb: number;
+  activations_mb: number;
+  overhead_mb: number;
+  total_mb: number;
+  total_gb: number;
+  warning: string | null;
+}
 
 export interface FineTuningConfig {
   model_name: string;
@@ -243,6 +316,9 @@ export interface FineTuningConfig {
   warmup_ratio: number;
   logging_steps: number;
   eval_steps: number;
+  optim: FineTuningOptimizer;
+  fast_mode: boolean;
+  use_gradient_checkpointing: boolean;
   save_adapter: boolean;
   resume_from?: string;
 }
@@ -285,5 +361,24 @@ export interface AdapterCheckpointInfo {
   timestamp: string | null;
 }
 
-export const FINE_TUNING_MODELS = ['unsloth/Qwen2.5-7B-Instruct'] as const;
+export const FINE_TUNING_MODELS: FineTuningModelOption[] = [
+  {
+    name: 'Qwen 2.5 7B Instruct',
+    hf_id: 'unsloth/Qwen2.5-7B-Instruct',
+    family: 'qwen',
+    params_billion: 7.0,
+    recommended_max_seq: 2048,
+    recommended_lora_r: 32,
+    tags: ['balanced', 'default'],
+  },
+  {
+    name: 'Qwen 2.5 14B Instruct',
+    hf_id: 'unsloth/Qwen2.5-14B-Instruct',
+    family: 'qwen',
+    params_billion: 14.0,
+    recommended_max_seq: 1024,
+    recommended_lora_r: 16,
+    tags: ['high-capacity', '16gb-stretch'],
+  },
+];
 export const LORA_RANKS = [8, 16, 32, 64] as const;

@@ -4,9 +4,10 @@
  * Dashboard view for GPT pretraining with real-time metrics.
  */
 
-import { useEffect, useCallback, useMemo } from 'react';
+import { useEffect, useCallback, useMemo, useState } from 'react';
 import { useTraining } from '../context/TrainingContext';
 import { useWebSocket } from '../hooks/useWebSocket';
+import type { PretrainingRunDetail } from '../types';
 import {
   MetricsDisplay,
   TrainingControls,
@@ -16,12 +17,14 @@ import {
   SampleTextDisplay,
   ProgressIndicators,
   GenerationPanel,
+  RunHistoryPanel,
 } from '../components/pretraining';
 import { ErrorBanner } from '../components/shared';
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/training';
 
 export function PretrainingPage() {
+  const [comparisonRuns, setComparisonRuns] = useState<PretrainingRunDetail[]>([]);
   const {
     handleWebSocketMessage,
     setConnected,
@@ -74,7 +77,7 @@ export function PretrainingPage() {
       <div className="dashboard-view">
         <div className="dashboard-main">
           <MetricsDisplay />
-          <LossChart />
+          <LossChart comparisonRuns={comparisonRuns} />
           <div className="dashboard-charts-row">
             <LearningRateChart />
             <TokenCounter />
@@ -83,6 +86,10 @@ export function PretrainingPage() {
         </div>
         <div className="dashboard-right-column">
           <TrainingControls />
+          <RunHistoryPanel
+            activeRunId={status.run_id}
+            onComparisonChange={setComparisonRuns}
+          />
           <ProgressIndicators />
           {status.state !== 'idle' && (
             <div className={`training-state-badge training-state-${status.state}`}>

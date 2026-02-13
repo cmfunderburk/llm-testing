@@ -20,7 +20,9 @@ Reference: Radford et al., "Language Models Are Unsupervised Multitask Learners"
 import torch
 import torch.nn as nn
 import math
-from typing import Optional, Dict, Any
+from typing import Dict
+import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from .config import GPT_CONFIGS, GPTConfig
 
@@ -213,8 +215,16 @@ class MultiHeadAttention(nn.Module):
     The attention formula: Attention(Q,K,V) = softmax(QK^T / sqrt(d_k)) V
     """
 
-    def __init__(self, d_in: int, d_out: int, context_length: int,
-                 num_heads: int, dropout: float = 0.0, qkv_bias: bool = False):
+    def __init__(
+        self,
+        d_in: int,
+        d_out: int,
+        context_length: int,
+        num_heads: int,
+        dropout: float = 0.0,
+        qkv_bias: bool = False,
+        attention_impl: str = "manual",
+    ):
         """
         Args:
             d_in: Input embedding dimension
@@ -223,12 +233,16 @@ class MultiHeadAttention(nn.Module):
             num_heads: Number of attention heads
             dropout: Dropout probability for attention weights
             qkv_bias: Whether to use bias in Q/K/V projections
+            attention_impl: Attention implementation backend ("manual" or "sdpa")
         """
         super().__init__()
         assert d_out % num_heads == 0, "d_out must be divisible by num_heads"
+        if attention_impl not in ("manual", "sdpa"):
+            raise ValueError(f"Unknown attention_impl: {attention_impl}")
 
         self.d_out = d_out
         self.num_heads = num_heads
+        self.attention_impl = attention_impl
         # Each head operates on a slice of the embedding
         self.head_dim = d_out // num_heads
 
@@ -279,29 +293,40 @@ class MultiHeadAttention(nn.Module):
         keys = keys.transpose(1, 2)
         values = values.transpose(1, 2)
 
-        # Compute attention scores: Q @ K^T
-        # (batch, num_heads, num_tokens, head_dim) @ (batch, num_heads, head_dim, num_tokens)
-        # -> (batch, num_heads, num_tokens, num_tokens)
-        attn_scores = queries @ keys.transpose(2, 3)
+        if self.attention_impl == "sdpa":
+            # Let PyTorch dispatch to the most memory-efficient kernel available.
+            context_vec = F.scaled_dot_product_attention(
+                queries,
+                keys,
+                values,
+                attn_mask=None,
+                dropout_p=self.dropout.p if self.training else 0.0,
+                is_causal=True,
+            )
+        else:
+            # Compute attention scores: Q @ K^T
+            # (batch, num_heads, num_tokens, head_dim) @ (batch, num_heads, head_dim, num_tokens)
+            # -> (batch, num_heads, num_tokens, num_tokens)
+            attn_scores = queries @ keys.transpose(2, 3)
 
-        # Apply causal mask: set future positions to -inf so softmax makes them 0
-        mask_bool = self.mask.bool()[:num_tokens, :num_tokens]
-        attn_scores.masked_fill_(mask_bool, -torch.inf)
+            # Apply causal mask: set future positions to -inf so softmax makes them 0
+            mask_bool = self.mask.bool()[:num_tokens, :num_tokens]
+            attn_scores.masked_fill_(mask_bool, -torch.inf)
 
-        # Scale by sqrt(head_dim) to prevent large values that saturate softmax
-        # This is the "scaled" in "scaled dot-product attention"
-        attn_scores = attn_scores / math.sqrt(self.head_dim)
+            # Scale by sqrt(head_dim) to prevent large values that saturate softmax
+            # This is the "scaled" in "scaled dot-product attention"
+            attn_scores = attn_scores / math.sqrt(self.head_dim)
 
-        # Softmax to get attention weights (probabilities that sum to 1)
-        attn_weights = torch.softmax(attn_scores, dim=-1)
+            # Softmax to get attention weights (probabilities that sum to 1)
+            attn_weights = torch.softmax(attn_scores, dim=-1)
 
-        # Apply dropout to attention weights for regularization
-        attn_weights = self.dropout(attn_weights)
+            # Apply dropout to attention weights for regularization
+            attn_weights = self.dropout(attn_weights)
 
-        # Compute context vectors: weighted sum of values
-        # (batch, num_heads, num_tokens, num_tokens) @ (batch, num_heads, num_tokens, head_dim)
-        # -> (batch, num_heads, num_tokens, head_dim)
-        context_vec = attn_weights @ values
+            # Compute context vectors: weighted sum of values
+            # (batch, num_heads, num_tokens, num_tokens) @ (batch, num_heads, num_tokens, head_dim)
+            # -> (batch, num_heads, num_tokens, head_dim)
+            context_vec = attn_weights @ values
 
         # Transpose back and reshape to combine heads
         # (batch, num_heads, num_tokens, head_dim) -> (batch, num_tokens, num_heads, head_dim)
@@ -361,7 +386,8 @@ class TransformerBlock(nn.Module):
             context_length=cfg.context_length,
             num_heads=cfg.n_heads,
             dropout=cfg.drop_rate,
-            qkv_bias=cfg.qkv_bias
+            qkv_bias=cfg.qkv_bias,
+            attention_impl=cfg.attention_impl,
         )
 
         # Feed-forward network
@@ -449,17 +475,18 @@ class GPTModel(nn.Module):
         self.drop_emb = nn.Dropout(cfg.drop_rate)
 
         # Stack of transformer blocks - this is where the magic happens
-        self.trf_blocks = nn.Sequential(
-            *[TransformerBlock(cfg) for _ in range(cfg.n_layers)]
+        self.trf_blocks = nn.ModuleList(
+            [TransformerBlock(cfg) for _ in range(cfg.n_layers)]
         )
 
         # Final layer normalization
         self.final_norm = LayerNorm(cfg.emb_dim)
 
         # Output projection to vocabulary size
-        # Note: GPT-2 uses weight tying (shares weights with token embedding)
-        # but we keep them separate here for clarity
+        # GPT-2 commonly ties this weight with token embeddings.
         self.out_head = nn.Linear(cfg.emb_dim, cfg.vocab_size, bias=False)
+        if cfg.tie_embeddings:
+            self.out_head.weight = self.tok_emb.weight
 
     def forward(self, in_idx: torch.Tensor) -> torch.Tensor:
         """
@@ -493,7 +520,11 @@ class GPTModel(nn.Module):
         x = self.drop_emb(x)
 
         # Pass through transformer blocks
-        x = self.trf_blocks(x)  # (batch, seq_len, emb_dim)
+        for block in self.trf_blocks:
+            if self.cfg.gradient_checkpointing and self.training:
+                x = checkpoint(block, x, use_reentrant=False)
+            else:
+                x = block(x)
 
         # Final normalization
         x = self.final_norm(x)
@@ -516,7 +547,7 @@ class GPTModel(nn.Module):
                 p.numel() for p in self.trf_blocks.parameters()
             ),
             'final_norm': sum(p.numel() for p in self.final_norm.parameters()),
-            'output_head': self.out_head.weight.numel(),
+            'output_head': 0 if self.out_head.weight is self.tok_emb.weight else self.out_head.weight.numel(),
         }
         breakdown['total'] = sum(breakdown.values())
         return breakdown
@@ -605,7 +636,7 @@ if __name__ == '__main__':
 
     # Print parameter breakdown
     breakdown = model.get_parameter_breakdown()
-    print(f"\nModel: nano")
+    print("\nModel: nano")
     print(f"Total parameters: {breakdown['total']:,}")
     for name, count in breakdown.items():
         if name != 'total':

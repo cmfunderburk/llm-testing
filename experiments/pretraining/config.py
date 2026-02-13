@@ -14,10 +14,9 @@ Reference configurations are based on:
 - GPT-3: "Language Models Are Few-Shot Learners" (Brown et al., 2020)
 """
 
-from dataclasses import dataclass, asdict, field
-from typing import Dict, Any, Optional
+from dataclasses import dataclass, asdict
+from typing import Dict, Any, Literal
 import yaml
-from pathlib import Path
 
 
 @dataclass
@@ -46,6 +45,10 @@ class GPTConfig:
     n_layers: int = 12  # Number of transformer blocks
     drop_rate: float = 0.1  # Dropout rate
     qkv_bias: bool = False  # No bias in QKV projections (GPT-2 style)
+    attention_impl: Literal["manual", "sdpa"] = "manual"  # Attention backend
+    tie_embeddings: bool = False  # Share token embedding and output projection
+    gradient_checkpointing: bool = False  # Recompute block activations in backward
+    precision: Literal["fp32", "bf16", "fp16"] = "fp32"  # Intended train precision
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -75,7 +78,7 @@ class GPTConfig:
             d = yaml.safe_load(f)
         return cls.from_dict(d)
 
-    def estimate_params(self) -> int:
+    def estimate_params(self, tie_embeddings: bool = False) -> int:
         """
         Estimate total parameter count.
 
@@ -103,17 +106,25 @@ class GPTConfig:
         final_ln = 2 * self.emb_dim
 
         # Output head: vocab_size * emb_dim (often weight-tied with tok_emb)
-        out_head = self.vocab_size * self.emb_dim
+        out_head = 0 if tie_embeddings else self.vocab_size * self.emb_dim
 
         return tok_emb + pos_emb + total_blocks + final_ln + out_head
 
-    def estimate_vram_mb(self, batch_size: int) -> dict:
+    def estimate_vram_mb(
+        self,
+        batch_size: int,
+        precision: Literal["fp32", "bf16", "fp16"] = "fp32",
+        optimizer: Literal["adamw", "adamw_8bit", "paged_adamw_8bit"] = "adamw",
+        attention_impl: Literal["manual", "sdpa"] = "manual",
+        gradient_checkpointing: bool = False,
+        tie_embeddings: bool = False,
+    ) -> dict:
         """
         Estimate VRAM requirements for training in MB.
 
         Returns a breakdown of memory usage:
-        - model: Model parameters (fp32)
-        - optimizer: AdamW states (momentum + variance)
+        - model: Model parameters
+        - optimizer: Optimizer states
         - gradients: Gradient storage
         - activations: Forward pass activations (approximate)
         - overhead: CUDA context, fragmentation, temp buffers
@@ -124,55 +135,73 @@ class GPTConfig:
         - PyTorch memory allocator overhead
         - Temporary buffers during computation
         """
-        params = self.estimate_params()
-        bytes_per_param = 4  # fp32
+        params = self.estimate_params(tie_embeddings=tie_embeddings)
+
+        # In the current pretraining implementation, AMP affects activation dtype,
+        # while model weights, gradients, and AdamW states remain fp32.
+        weights_bytes_per_param = 4
+        activation_bytes_per_value = 4 if precision == "fp32" else 2
+        optimizer_factor = {
+            "adamw": 2.0,              # two fp32 moment states
+            "adamw_8bit": 0.5,         # approximate 8-bit moment storage
+            "paged_adamw_8bit": 0.35,  # additional VRAM relief via paging
+        }[optimizer]
 
         # Model weights
-        model_bytes = params * bytes_per_param
+        model_bytes = params * weights_bytes_per_param
 
-        # Optimizer states (AdamW: momentum + variance = 2x params)
-        optimizer_bytes = params * bytes_per_param * 2
+        # Optimizer states
+        optimizer_bytes = int(params * weights_bytes_per_param * optimizer_factor)
 
         # Gradients
-        gradient_bytes = params * bytes_per_param
+        gradient_bytes = params * weights_bytes_per_param
 
         # Activations (rough estimate for training)
         # During training, PyTorch stores activations for the backward pass.
-        # Per layer: attention scores (batch * heads * seq * seq * 4 bytes)
-        #            + attention output (batch * seq * emb_dim * 4)
-        #            + FFN intermediates (batch * seq * 4*emb_dim * 4)
+        # Per layer: attention scores (batch * heads * seq * seq * bytes)
+        #            + attention output (batch * seq * emb_dim * bytes)
+        #            + FFN intermediates (batch * seq * 4*emb_dim * bytes)
         #            + residual connections, layer norms, etc.
         #
-        # Empirically calibrated factor based on actual training runs
-        activation_factor = 100  # Higher to account for backward pass storage
+        # Empirically calibrated factor based on observed 16GB-class runs.
+        # Target anchor: medium (124M), batch=4, ctx=1024, fp32, manual attention
+        # should estimate near ~14-15GB instead of >20GB.
+        activation_factor = 50
+        if gradient_checkpointing:
+            activation_factor = int(activation_factor * 0.65)
 
         activation_bytes = (
             batch_size *
             self.context_length *
             self.emb_dim *
             self.n_layers *
-            activation_factor
+            activation_factor *
+            activation_bytes_per_value
         )
 
-        # Attention score matrices: batch * n_heads * seq_len^2 * 4 bytes * n_layers
-        attention_scores_bytes = (
+        # Attention score matrices: batch * n_heads * seq_len^2 * bytes * n_layers
+        manual_attention_scores_bytes = (
             batch_size *
             self.n_heads *
             self.context_length *
             self.context_length *
-            4 *  # fp32
+            activation_bytes_per_value *
             self.n_layers
         )
+        attention_scores_bytes = manual_attention_scores_bytes
+        if attention_impl == "sdpa":
+            # SDPA-backed kernels avoid the full score matrix materialization path.
+            attention_scores_bytes = int(manual_attention_scores_bytes * 0.06)
 
         # Fixed overhead: CUDA context (~1GB) + PyTorch allocator cache + misc
-        overhead_bytes = 1000 * 1024 * 1024
+        overhead_bytes = 1100 * 1024 * 1024
 
         # Total activations including attention scores
         total_activation_bytes = activation_bytes + attention_scores_bytes
 
         # Safety multiplier for fragmentation, temp buffers, PyTorch caching
         subtotal = model_bytes + optimizer_bytes + gradient_bytes + total_activation_bytes
-        fragmentation = int(subtotal * 0.20)  # ~20% fragmentation overhead
+        fragmentation = int(subtotal * 0.15)  # ~15% fragmentation overhead
 
         total_bytes = subtotal + overhead_bytes + fragmentation
 
@@ -189,6 +218,13 @@ class GPTConfig:
             "params": params,
             "batch_size": batch_size,
             "context_length": self.context_length,
+            "assumptions": {
+                "precision": precision,
+                "optimizer": optimizer,
+                "attention_impl": attention_impl,
+                "gradient_checkpointing": gradient_checkpointing,
+                "tie_embeddings": tie_embeddings,
+            },
         }
 
 

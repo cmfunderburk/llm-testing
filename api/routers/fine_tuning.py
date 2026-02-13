@@ -15,7 +15,7 @@ import queue
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel
@@ -23,6 +23,125 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 ADAPTER_BASE_DIR = Path("outputs/fine_tuning/adapters")
+
+FAMILY_TARGET_MODULES: Dict[str, List[str]] = {
+    "qwen": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "llama": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "mistral": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+}
+
+FINE_TUNING_MODELS: List[Dict[str, Any]] = [
+    {
+        "name": "Qwen 2.5 7B Instruct",
+        "hf_id": "unsloth/Qwen2.5-7B-Instruct",
+        "family": "qwen",
+        "params_billion": 7.0,
+        "recommended_max_seq": 2048,
+        "recommended_lora_r": 32,
+        "tags": ["balanced", "default"],
+    },
+    {
+        "name": "Qwen 2.5 14B Instruct",
+        "hf_id": "unsloth/Qwen2.5-14B-Instruct",
+        "family": "qwen",
+        "params_billion": 14.0,
+        "recommended_max_seq": 1024,
+        "recommended_lora_r": 16,
+        "tags": ["high-capacity", "16gb-stretch"],
+    },
+]
+
+
+def _get_model_info(model_name: str) -> Dict[str, Any]:
+    for model in FINE_TUNING_MODELS:
+        if model["hf_id"] == model_name:
+            return model
+    return {
+        "name": model_name,
+        "hf_id": model_name,
+        "family": "unknown",
+        "params_billion": 7.0,
+        "recommended_max_seq": 1024,
+        "recommended_lora_r": 32,
+        "tags": ["custom"],
+    }
+
+
+def _infer_target_modules(model) -> List[str]:
+    """Fallback module inference when family mapping is unknown."""
+    try:
+        import torch.nn as nn
+    except ImportError:
+        return FAMILY_TARGET_MODULES["qwen"]
+
+    preferred = set(FAMILY_TARGET_MODULES["qwen"])
+    found: set[str] = set()
+    for name, module in model.named_modules():
+        if not isinstance(module, nn.Linear):
+            continue
+        suffix = name.split(".")[-1]
+        if suffix in preferred:
+            found.add(suffix)
+
+    if found:
+        ordered = [name for name in FAMILY_TARGET_MODULES["qwen"] if name in found]
+        return ordered
+    return FAMILY_TARGET_MODULES["qwen"]
+
+
+def _estimate_fine_tuning_vram_mb(
+    model_name: str,
+    max_seq_length: int,
+    batch_size: int,
+    lora_r: int,
+    optim: Literal["adamw_8bit", "paged_adamw_8bit", "adamw_torch"],
+    use_gradient_checkpointing: bool,
+) -> Dict[str, float]:
+    """
+    Rough VRAM estimate for QLoRA runs.
+
+    This is heuristic and intentionally conservative for 16GB planning.
+    """
+    model_info = _get_model_info(model_name)
+    params_b = model_info.get("params_billion", 7.0)
+    params = params_b * 1_000_000_000
+
+    # 4-bit quantized base model plus quantization metadata overhead.
+    model_bytes = int(params * 0.55)
+
+    # LoRA trainable parameters are a small fraction of base params.
+    lora_fraction = 0.003 * (lora_r / 32.0)
+    lora_params = max(1, int(params * lora_fraction))
+    lora_bytes = lora_params * 2  # bf16 params
+
+    optimizer_factor = {
+        "adamw_torch": 4.0,         # two fp32 moments over bf16 trainables
+        "adamw_8bit": 1.0,          # approximate compressed states
+        "paged_adamw_8bit": 0.7,    # less VRAM, more host paging
+    }[optim]
+    optimizer_bytes = int(lora_params * 2 * optimizer_factor)
+
+    # Activation memory scales with seq length, micro-batch, and model size.
+    activation_gb = 1.2 * batch_size * (max_seq_length / 1024.0) * (params_b / 7.0)
+    if use_gradient_checkpointing:
+        activation_gb *= 0.6
+    activations_bytes = int(activation_gb * 1024 * 1024 * 1024)
+
+    overhead_bytes = int(1.5 * 1024 * 1024 * 1024)
+    subtotal = model_bytes + lora_bytes + optimizer_bytes + activations_bytes
+    fragmentation = int(subtotal * 0.15)
+    total_bytes = subtotal + overhead_bytes + fragmentation
+
+    mb = 1024 * 1024
+    return {
+        "model_mb": round(model_bytes / mb, 1),
+        "lora_mb": round(lora_bytes / mb, 1),
+        "optimizer_mb": round(optimizer_bytes / mb, 1),
+        "activations_mb": round(activations_bytes / mb, 1),
+        "overhead_mb": round((overhead_bytes + fragmentation) / mb, 1),
+        "total_mb": round(total_bytes / mb, 1),
+        "total_gb": round(total_bytes / (1024 * mb), 2),
+    }
 
 
 def _sanitize_float(value: Optional[float]) -> Optional[float]:
@@ -52,6 +171,9 @@ class FineTuningConfig(BaseModel):
     warmup_ratio: float = 0.1
     logging_steps: int = 10
     eval_steps: int = 50
+    optim: Literal["adamw_8bit", "paged_adamw_8bit", "adamw_torch"] = "adamw_8bit"
+    fast_mode: bool = False
+    use_gradient_checkpointing: bool = True
     save_adapter: bool = True
     resume_from: Optional[str] = None  # adapter checkpoint path
 
@@ -91,6 +213,27 @@ class GenerateResponse(BaseModel):
     tokens_generated: int
     prompt: str
     adapter_path: Optional[str] = None
+
+
+class FineTuningModelOption(BaseModel):
+    name: str
+    hf_id: str
+    family: str
+    params_billion: float
+    recommended_max_seq: int
+    recommended_lora_r: int
+    tags: List[str]
+
+
+class FineTuningVRAMEstimate(BaseModel):
+    model_mb: float
+    lora_mb: float
+    optimizer_mb: float
+    activations_mb: float
+    overhead_mb: float
+    total_mb: float
+    total_gb: float
+    warning: Optional[str] = None
 
 
 # =============================================================================
@@ -310,12 +453,16 @@ class FineTuningManager:
             })
 
             loop = asyncio.get_event_loop()
+            model_info = _get_model_info(config.model_name)
 
             # Load model + LoRA + dataset in thread
             def _setup():
                 import psutil  # noqa: F401 - must import before unsloth
                 import os
-                os.environ["UNSLOTH_DISABLE_TRAINER_PATCHING"] = "1"
+                if config.fast_mode:
+                    os.environ.pop("UNSLOTH_DISABLE_TRAINER_PATCHING", None)
+                else:
+                    os.environ["UNSLOTH_DISABLE_TRAINER_PATCHING"] = "1"
 
                 from unsloth import FastLanguageModel
                 from unsloth.chat_templates import get_chat_template
@@ -331,18 +478,19 @@ class FineTuningManager:
                     dtype=None,
                 )
 
+                target_modules = FAMILY_TARGET_MODULES.get(model_info["family"])
+                if not target_modules:
+                    target_modules = _infer_target_modules(model)
+
                 # Add LoRA adapters
                 model = FastLanguageModel.get_peft_model(
                     model,
                     r=config.lora_r,
                     lora_alpha=config.lora_alpha,
                     lora_dropout=config.lora_dropout,
-                    target_modules=[
-                        "q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj",
-                    ],
+                    target_modules=target_modules,
                     bias="none",
-                    use_gradient_checkpointing="unsloth",
+                    use_gradient_checkpointing="unsloth" if config.use_gradient_checkpointing else False,
                     random_state=42,
                 )
 
@@ -372,15 +520,15 @@ class FineTuningManager:
                 dataset = dataset.map(format_example, remove_columns=dataset.column_names)
                 dataset = dataset.train_test_split(test_size=0.1, seed=42)
 
-                return model, tokenizer, dataset, trainable, total, SFTTrainer, TrainingArguments, TrainerCallback
+                return model, tokenizer, dataset, trainable, total, target_modules, SFTTrainer, TrainingArguments, TrainerCallback
 
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "loading",
-                "message": f"Loading {config.model_name} with LoRA r={config.lora_r}...",
+                "message": f"Loading {config.model_name} with LoRA r={config.lora_r} ({'fast' if config.fast_mode else 'compatibility'} mode)...",
             })
 
-            (model, tokenizer, dataset, trainable_params, total_params,
+            (model, tokenizer, dataset, trainable_params, total_params, target_modules,
              SFTTrainer, TrainingArguments, TrainerCallbackBase) = await loop.run_in_executor(None, _setup)
 
             self.status.trainable_params = trainable_params
@@ -389,7 +537,11 @@ class FineTuningManager:
             await self.broadcast_metrics({
                 "type": "status",
                 "state": "loading",
-                "message": f"Model loaded. {trainable_params:,} trainable params ({100*trainable_params/total_params:.2f}%). Preparing trainer...",
+                "message": (
+                    f"Model loaded. {trainable_params:,} trainable params "
+                    f"({100*trainable_params/total_params:.2f}%). "
+                    f"Preparing trainer ({config.optim}, modules={','.join(target_modules)})..."
+                ),
             })
 
             # Determine save directory
@@ -430,7 +582,7 @@ class FineTuningManager:
                 eval_steps=config.eval_steps,
                 save_strategy="no",
                 bf16=True,
-                optim="adamw_8bit",
+                optim=config.optim,
                 seed=42,
                 report_to="none",
             )
@@ -481,7 +633,7 @@ class FineTuningManager:
 
             # Save final adapter if configured
             if config.save_adapter:
-                final_path = save_dir / f"checkpoint-final"
+                final_path = save_dir / "checkpoint-final"
                 final_path.mkdir(parents=True, exist_ok=True)
                 model.save_pretrained(str(final_path))
                 tokenizer.save_pretrained(str(final_path))
@@ -579,6 +731,51 @@ router = APIRouter(prefix="/api/fine-tuning", tags=["fine-tuning"])
 async def get_status():
     """Get current fine-tuning status."""
     return fine_tuning_manager.status
+
+
+@router.get("/models", response_model=List[FineTuningModelOption])
+async def list_models():
+    """List supported fine-tuning base models."""
+    return [FineTuningModelOption(**model) for model in FINE_TUNING_MODELS]
+
+
+@router.get("/estimate-vram", response_model=FineTuningVRAMEstimate)
+async def estimate_vram(
+    model_name: str = "unsloth/Qwen2.5-7B-Instruct",
+    max_seq_length: int = 1024,
+    batch_size: int = 4,
+    lora_r: int = 32,
+    optim: Literal["adamw_8bit", "paged_adamw_8bit", "adamw_torch"] = "adamw_8bit",
+    use_gradient_checkpointing: bool = True,
+):
+    estimate = _estimate_fine_tuning_vram_mb(
+        model_name=model_name,
+        max_seq_length=max_seq_length,
+        batch_size=batch_size,
+        lora_r=lora_r,
+        optim=optim,
+        use_gradient_checkpointing=use_gradient_checkpointing,
+    )
+
+    warning = None
+    if estimate["total_gb"] > 15.5:
+        warning = "Likely to exceed 16GB VRAM. Reduce sequence length or micro-batch."
+    elif estimate["total_gb"] > 13.5:
+        warning = "Near 16GB limit; OOM risk is high."
+    elif estimate["total_gb"] > 10.5:
+        warning = "High VRAM usage; monitor training closely."
+
+    tips = []
+    if not use_gradient_checkpointing and estimate["total_gb"] > 10.5:
+        tips.append("enable gradient checkpointing")
+    if optim == "adamw_torch" and estimate["total_gb"] > 10.5:
+        tips.append("switch to adamw_8bit or paged_adamw_8bit")
+    if max_seq_length > 2048 and estimate["total_gb"] > 10.5:
+        tips.append("reduce max_seq_length")
+    if warning and tips:
+        warning = f"{warning} Suggested: {', '.join(tips[:2])}."
+
+    return FineTuningVRAMEstimate(**estimate, warning=warning)
 
 
 @router.post("/start", response_model=FineTuningStatus)

@@ -5,9 +5,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { TrainingMetrics } from '../types';
 
-interface UseWebSocketOptions {
+interface UseWebSocketOptions<T = TrainingMetrics> {
   url: string;
-  onMessage?: (data: TrainingMetrics) => void;
+  onMessage?: (data: T) => void;
   onOpen?: () => void;
   onClose?: () => void;
   onError?: (error: Event) => void;
@@ -15,15 +15,15 @@ interface UseWebSocketOptions {
   reconnectInterval?: number;
 }
 
-interface UseWebSocketReturn {
+interface UseWebSocketReturn<T = TrainingMetrics> {
   isConnected: boolean;
-  lastMessage: TrainingMetrics | null;
+  lastMessage: T | null;
   error: string | null;
   send: (data: string) => void;
   reconnect: () => void;
 }
 
-export function useWebSocket({
+export function useWebSocket<T = TrainingMetrics>({
   url,
   onMessage,
   onOpen,
@@ -31,14 +31,15 @@ export function useWebSocket({
   onError,
   reconnectAttempts = 3,
   reconnectInterval = 2000,
-}: UseWebSocketOptions): UseWebSocketReturn {
+}: UseWebSocketOptions<T>): UseWebSocketReturn<T> {
   const [isConnected, setIsConnected] = useState(false);
-  const [lastMessage, setLastMessage] = useState<TrainingMetrics | null>(null);
+  const [lastMessage, setLastMessage] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectCountRef = useRef(0);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const connectRef = useRef<() => void>(() => {});
 
   // Store callbacks in refs to avoid reconnection when they change
   const onMessageRef = useRef(onMessage);
@@ -46,11 +47,21 @@ export function useWebSocket({
   const onCloseRef = useRef(onClose);
   const onErrorRef = useRef(onError);
 
-  // Update refs when callbacks change
-  onMessageRef.current = onMessage;
-  onOpenRef.current = onOpen;
-  onCloseRef.current = onClose;
-  onErrorRef.current = onError;
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
+
+  useEffect(() => {
+    onOpenRef.current = onOpen;
+  }, [onOpen]);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   const connect = useCallback(() => {
     if (wsRef.current) {
@@ -70,7 +81,7 @@ export function useWebSocket({
 
       ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data) as TrainingMetrics;
+          const data = JSON.parse(event.data) as T;
           setLastMessage(data);
           onMessageRef.current?.(data);
         } catch {
@@ -87,7 +98,7 @@ export function useWebSocket({
         if (reconnectCountRef.current < reconnectAttempts) {
           reconnectCountRef.current += 1;
           reconnectTimeoutRef.current = window.setTimeout(() => {
-            connect();
+            connectRef.current();
           }, reconnectInterval);
         } else {
           setError(`Failed to connect after ${reconnectAttempts} attempts`);
@@ -102,6 +113,9 @@ export function useWebSocket({
       setError(`Failed to create WebSocket: ${e}`);
     }
   }, [url, reconnectAttempts, reconnectInterval]);
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   const send = useCallback((data: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -116,9 +130,12 @@ export function useWebSocket({
   }, [connect]);
 
   useEffect(() => {
-    connect();
+    const connectTimer = window.setTimeout(() => {
+      connect();
+    }, 0);
 
     return () => {
+      clearTimeout(connectTimer);
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }

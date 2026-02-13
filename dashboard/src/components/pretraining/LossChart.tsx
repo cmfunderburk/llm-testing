@@ -14,9 +14,15 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { useTraining } from '../../context/TrainingContext';
+import type { PretrainingRunDetail } from '../../types';
+
+interface LossChartProps {
+  comparisonRuns?: PretrainingRunDetail[];
+}
 
 // Maximum points to render for performance
 const MAX_CHART_POINTS = 500;
+const COMPARISON_COLORS = ['#f97316', '#facc15', '#22d3ee', '#f472b6'];
 
 function downsampleData<T>(data: T[], maxPoints: number): T[] {
   if (data.length <= maxPoints) return data;
@@ -36,19 +42,55 @@ function downsampleData<T>(data: T[], maxPoints: number): T[] {
   return sampled;
 }
 
-export function LossChart() {
+export function LossChart({ comparisonRuns = [] }: LossChartProps) {
   const { metricsHistory } = useTraining();
 
-  const chartData = useMemo(() => {
-    const mapped = metricsHistory.map((m) => ({
-      step: m.step,
-      'Train Loss': m.train_loss,
-      'Val Loss': m.val_loss ?? null,
-    }));
-    return downsampleData(mapped, MAX_CHART_POINTS);
-  }, [metricsHistory]);
+  const comparisonSeries = useMemo(() => {
+    return comparisonRuns.map((run, index) => {
+      const shortId = run.run_id.slice(-8);
+      const label = `${run.config?.config_name || 'run'}:${shortId}`;
+      return {
+        run,
+        label,
+        trainKey: `${label} Train`,
+        valKey: `${label} Val`,
+        color: COMPARISON_COLORS[index % COMPARISON_COLORS.length],
+      };
+    });
+  }, [comparisonRuns]);
 
-  if (chartData.length === 0) {
+  const chartData = useMemo(() => {
+    const rowsByStep = new Map<number, Record<string, number | string | null>>();
+
+    const ensureRow = (step: number) => {
+      if (!rowsByStep.has(step)) {
+        rowsByStep.set(step, { step });
+      }
+      return rowsByStep.get(step)!;
+    };
+
+    for (const metric of metricsHistory) {
+      const row = ensureRow(metric.step);
+      row['Current Train'] = metric.train_loss;
+      row['Current Val'] = metric.val_loss ?? null;
+    }
+
+    for (const series of comparisonSeries) {
+      for (const metric of series.run.metrics) {
+        const row = ensureRow(metric.step);
+        row[series.trainKey] = metric.train_loss;
+        row[series.valKey] = metric.val_loss;
+      }
+    }
+
+    const sorted = Array.from(rowsByStep.values()).sort((a, b) => Number(a.step) - Number(b.step));
+    return downsampleData(sorted, MAX_CHART_POINTS);
+  }, [metricsHistory, comparisonSeries]);
+
+  const hasCurrentData = metricsHistory.length > 0;
+  const hasComparisonData = comparisonSeries.some((series) => series.run.metrics.length > 0);
+
+  if (!hasCurrentData && !hasComparisonData) {
     return (
       <div className="chart-container">
         <h3>Loss Curve</h3>
@@ -58,6 +100,8 @@ export function LossChart() {
       </div>
     );
   }
+
+  const hasAnyCurrentVal = chartData.some((row) => row['Current Val'] !== null && row['Current Val'] !== undefined);
 
   return (
     <div className="chart-container">
@@ -86,28 +130,72 @@ export function LossChart() {
                 color: '#e4e4e4',
               }}
               labelFormatter={(label) => `Step ${label}`}
-              formatter={(value) => [typeof value === 'number' ? value.toFixed(4) : 'N/A', '']}
+              formatter={(value, name) => [typeof value === 'number' ? value.toFixed(4) : 'N/A', name]}
             />
             <Legend />
+
             <Line
               type="monotone"
-              dataKey="Train Loss"
+              dataKey="Current Train"
               stroke="#4a9eff"
               strokeWidth={2}
               dot={false}
               activeDot={{ r: 4 }}
               isAnimationActive={false}
+              connectNulls
             />
-            <Line
-              type="monotone"
-              dataKey="Val Loss"
-              stroke="#4ade80"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 4 }}
-              isAnimationActive={false}
-              connectNulls={false}
-            />
+
+            {hasAnyCurrentVal && (
+              <Line
+                type="monotone"
+                dataKey="Current Val"
+                stroke="#4ade80"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+                isAnimationActive={false}
+                strokeDasharray="4 3"
+                connectNulls={false}
+              />
+            )}
+
+            {comparisonSeries.map((series) => {
+              return (
+                <Line
+                  key={series.trainKey}
+                  type="monotone"
+                  dataKey={series.trainKey}
+                  stroke={series.color}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 3 }}
+                  isAnimationActive={false}
+                  connectNulls
+                />
+              );
+            })}
+
+            {comparisonSeries.map((series) => {
+              const hasVal = chartData.some(
+                (row) => row[series.valKey] !== null && row[series.valKey] !== undefined,
+              );
+              if (!hasVal) return null;
+
+              return (
+                <Line
+                  key={series.valKey}
+                  type="monotone"
+                  dataKey={series.valKey}
+                  stroke={series.color}
+                  strokeWidth={1.5}
+                  dot={false}
+                  activeDot={{ r: 3 }}
+                  isAnimationActive={false}
+                  strokeDasharray="5 3"
+                  connectNulls={false}
+                />
+              );
+            })}
           </LineChart>
         </ResponsiveContainer>
       </div>

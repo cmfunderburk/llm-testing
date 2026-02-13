@@ -383,6 +383,7 @@ export function FineTuningProvider({ children }: FineTuningProviderProps) {
 // Hook
 // =============================================================================
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useFineTuning(): FineTuningContextValue {
   const context = useContext(FineTuningContext);
   if (!context) {
