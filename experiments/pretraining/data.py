@@ -215,9 +215,12 @@ CACHE_DIR = CORPUS_DIR / ".cache"
 #   - shakespeare: Complete works of Shakespeare (~1MB)
 #   - pg19_train/pg19_validation/pg19_test: Official PG-19 splits (~11GB total)
 #   - pg19_*_small: Small subset (100 books per split) for testing
+# Prepared locally (run: python experiments/pretraining/prepare_wikipedia_ga.py):
+#   - wikipedia_ga_intros: Introductions from 50K+ Good Article+ Wikipedia articles (~65MB)
 CORPUS_REGISTRY = {
     'verdict': 'verdict.txt',
     'tiny': 'tiny.txt',
+    'wikipedia_ga_intros': 'wikipedia-ga-intros.txt',
     'tinystories': 'tinystories.txt',
     'wikitext2': 'wikitext2.txt',
     'shakespeare': 'shakespeare.txt',

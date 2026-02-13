@@ -52,6 +52,7 @@ export interface TrainingMetrics {
   text?: string;
   message?: string;  // Loading/error messages
   state?: TrainingState;
+  total_steps?: number;
   // Loading progress fields
   phase?: string;
   bytes_read?: number;
@@ -110,6 +111,7 @@ export const DATASETS: DatasetConfig[] = [
   // Downloadable datasets (auto-split)
   { name: 'Shakespeare', corpus: 'shakespeare', description: 'Complete works of Shakespeare', size: '~1 MB' },
   { name: 'WikiText-2', corpus: 'wikitext2', description: 'Wikipedia articles', size: '~13 MB' },
+  { name: 'Wikipedia GA Intros', corpus: 'wikipedia_ga_intros', description: 'Introductions from 50K+ Good Article Wikipedia pages', size: '~65 MB' },
   { name: 'TinyStories', corpus: 'tinystories', description: '2.1M synthetic short stories', size: '~1.8 GB' },
 
   // PG-19 with official splits
@@ -121,7 +123,7 @@ export const DATASETS: DatasetConfig[] = [
 
 // Legacy: individual corpus names for backward compatibility
 export const CORPORA = [
-  'verdict', 'tiny', 'tinystories', 'wikitext2', 'shakespeare',
+  'verdict', 'tiny', 'tinystories', 'wikitext2', 'wikipedia_ga_intros', 'shakespeare',
   'pg19_train', 'pg19_validation', 'pg19_test',
   'pg19_train_small', 'pg19_validation_small', 'pg19_test_small',
 ] as const;
