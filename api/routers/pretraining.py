@@ -191,6 +191,7 @@ class TrainingManager:
 
     async def _run_training(self, config: TrainingConfig):
         """Background training coroutine."""
+        import gc
         import torch
         from experiments.pretraining.model import GPTModel
         from experiments.pretraining.config import get_config, GPTConfig
@@ -1051,6 +1052,7 @@ async def websocket_training(websocket: WebSocket):
             "type": "status",
             "state": training_manager.status.state,
             "current_step": training_manager.status.current_step,
+            "total_steps": training_manager.status.total_steps,
         })
 
         for metrics in training_manager.metrics_history[-100:]:

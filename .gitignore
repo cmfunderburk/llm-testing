@@ -67,3 +67,9 @@ logs/
 # Coverage
 .coverage
 htmlcov/
+
+# Unsloth compile cache (generated at runtime)
+unsloth_compiled_cache/
+
+# Local prepared corpora
+experiments/pretraining/corpus/wikipedia-ga-intros.txt
