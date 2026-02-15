@@ -6,6 +6,8 @@ Following the PRD specification:
 - nano (~10M params): For rapid iteration and testing
 - small (~50M params): For more serious experiments
 - medium (~124M params): Matches GPT-2 small architecture
+- large (~204M params): Wider medium model for higher capacity
+- xlarge (~355M params): GPT-2 medium class model
 
 Each configuration is a dataclass that can be serialized to/from YAML.
 
@@ -268,6 +270,30 @@ GPT_CONFIG_MEDIUM = GPTConfig(
     qkv_bias=False,
 )
 
+# Large model (~204M parameters)
+# Wider medium model with same context window
+GPT_CONFIG_LARGE = GPTConfig(
+    vocab_size=50257,
+    context_length=1024,
+    emb_dim=1024,
+    n_heads=16,
+    n_layers=12,
+    drop_rate=0.1,
+    qkv_bias=False,
+)
+
+# XLarge model (~355M parameters)
+# Similar scale to GPT-2 medium
+GPT_CONFIG_XLARGE = GPTConfig(
+    vocab_size=50257,
+    context_length=1024,
+    emb_dim=1024,
+    n_heads=16,
+    n_layers=24,
+    drop_rate=0.1,
+    qkv_bias=False,
+)
+
 # GPT-2 124M (official configuration)
 # For loading pretrained weights
 GPT_CONFIG_124M = GPTConfig(
@@ -286,6 +312,8 @@ GPT_CONFIGS: Dict[str, GPTConfig] = {
     'nano': GPT_CONFIG_NANO,
     'small': GPT_CONFIG_SMALL,
     'medium': GPT_CONFIG_MEDIUM,
+    'large': GPT_CONFIG_LARGE,
+    'xlarge': GPT_CONFIG_XLARGE,
     'gpt2-124m': GPT_CONFIG_124M,
 }
 
@@ -295,7 +323,7 @@ def get_config(name: str) -> GPTConfig:
     Get a configuration by name.
 
     Args:
-        name: Configuration name ('nano', 'small', 'medium', 'gpt2-124m')
+        name: Configuration name ('nano', 'small', 'medium', 'large', 'xlarge', 'gpt2-124m')
 
     Returns:
         GPTConfig object

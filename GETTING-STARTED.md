@@ -4,103 +4,103 @@ Quick guide to setting up and running your first experiments.
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.12+ (see `.python-version`)
 - NVIDIA GPU with 16GB+ VRAM
 - CUDA toolkit installed
-- ~20GB disk space for models
+- [uv](https://docs.astral.sh/uv/) package manager
+- Node.js 18+ (for the dashboard)
+- ~20GB disk space for models and corpora
 
 ## Setup
 
-### 1. Clone and Enter Directory
+### 1. Install Dependencies
 
 ```bash
 cd /home/cmf/Work/llm-testing
+uv sync
 ```
 
-### 2. Create Virtual Environment
+This creates the `.venv` virtual environment and installs all Python dependencies from `pyproject.toml`.
+
+### 2. Verify Installation
 
 ```bash
-python -m venv .venv
 source .venv/bin/activate
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
 
-### 3. Install Dependencies
+### 3. Download Training Corpora (Optional)
+
+The repo includes small corpora (verdict, tiny) for quick testing. For meaningful pretraining experiments, download larger datasets:
 
 ```bash
-pip install unsloth transformers trl datasets torch matplotlib
+# See what's available
+python -m experiments.pretraining.download_corpora --list
+
+# Download recommended dataset
+python -m experiments.pretraining.download_corpora tinystories
+
+# Or download everything
+python -m experiments.pretraining.download_corpora --all
 ```
 
-Or if a requirements.txt exists:
+## First Experiment: Pretraining a GPT
+
+The fastest way to see something interesting is to pretrain a small GPT model.
+
+### Option A: Via the Dashboard (Recommended)
+
 ```bash
-pip install -r requirements.txt
+./run-dashboard.sh
 ```
 
-### 4. Verify Installation
+Open http://localhost:5173, navigate to **Pretraining**, set config to `nano`, corpus to `verdict`, epochs to `3`, and hit Start. Watch the loss curve and sample generations update in real time.
+
+### Option B: Via the CLI
 
 ```bash
-python -c "from experiments.attention import extract_attention; print('Setup OK')"
+source .venv/bin/activate
+python -m experiments.pretraining.train --config nano --corpus verdict --epochs 3
 ```
 
-## First Experiment
+**What to observe**:
+- Loss drops rapidly (the model is memorizing a small text)
+- Generated samples go from gibberish to recognizable fragments
+- Final loss should be very low (<0.5)
 
-Start with a simple QLoRA fine-tuning run:
+For a more meaningful run, try TinyStories:
+
+```bash
+python -m experiments.pretraining.train --config nano --corpus tinystories --epochs 1
+```
+
+See [TRAINING-GUIDE.md](TRAINING-GUIDE.md) for a full walkthrough with learning exercises.
+
+## Other Experiments
+
+### Fine-Tuning (QLoRA)
 
 ```bash
 python -m experiments.fine_tuning.basic_qlora
 ```
 
-This will:
-1. Load Qwen2.5-7B-Instruct (4-bit quantized)
-2. Fine-tune on a small dataset
-3. Show training metrics
+Loads Qwen2.5-7B-Instruct (4-bit quantized) and fine-tunes on a small dataset.
 
-Watch for:
-- Initial loss value
-- Loss curve shape
-- Final loss value
-
-## Recommended Path
-
-### Week 1: Track A (Fine-Tuning)
+### Attention Visualization
 
 ```bash
-# 1. Basic training to see loss curves
-python -m experiments.fine_tuning.basic_qlora
-
-# 2. Compare learning rates
-python -m experiments.learning_rate.experiment
-
-# 3. Read the self-assessment
-cat docs/concepts/training-dynamics-self-assessment.md
-```
-
-### Week 2: Track B (Attention)
-
-```bash
-# 1. Extract and visualize attention
 python -m experiments.attention.compare_experiment
-
-# 2. Read the self-assessment
-cat docs/concepts/attention-self-assessment.md
 ```
 
-### Week 3: Track C (Representations)
+### Representation Probing
 
 ```bash
-# 1. Analyze activations
 python -m experiments.probing.run_analysis
-
-# 2. Read the self-assessment
-cat docs/concepts/representations-self-assessment.md
 ```
 
-### Week 4: Track D (Paper)
+### Paper Reproduction
 
 ```bash
-# 1. Read the paper annotation
-cat docs/papers/bayesian-geometry-attention.md
-
-# 2. Run claim reproduction
 python -m experiments.paper_reproduction.bayesian_geometry.experiment
 ```
 
@@ -108,42 +108,39 @@ python -m experiments.paper_reproduction.bayesian_geometry.experiment
 
 | Task | Command |
 |------|---------|
-| Run fine-tuning | `python -m experiments.fine_tuning.basic_qlora` |
+| Install dependencies | `uv sync` |
+| Launch dashboard | `./run-dashboard.sh` |
+| Pretrain (CLI) | `python -m experiments.pretraining.train --config nano --corpus verdict --epochs 3` |
+| Fine-tune | `python -m experiments.fine_tuning.basic_qlora` |
 | LR comparison | `python -m experiments.learning_rate.experiment` |
 | LoRA rank test | `python -m experiments.lora_rank.experiment` |
-| Forgetting test | `python -m experiments.forgetting.experiment` |
 | Attention analysis | `python -m experiments.attention.compare_experiment` |
-| Activation analysis | `python -m experiments.probing.run_analysis` |
-| Paper reproduction | `python -m experiments.paper_reproduction.bayesian_geometry.experiment` |
+| Download corpora | `python -m experiments.pretraining.download_corpora --list` |
 
 ## Output Locations
 
 Experiments save outputs to:
 ```
 outputs/
-├── fine_tuning/          # Training logs, checkpoints
-├── learning_rate/        # LR comparison results
-├── lora_rank/            # Rank comparison results
-├── attention/            # Attention visualizations
-├── representation_analysis/  # Activation statistics
-└── paper_reproduction/   # Claim test results
+├── pretraining/             # Checkpoints, run history
+├── fine_tuning/             # Training logs, checkpoints
+├── learning_rate/           # LR comparison results
+├── lora_rank/               # Rank comparison results
+├── attention/               # Attention visualizations
+├── representation_analysis/ # Activation statistics
+└── paper_reproduction/      # Claim test results
 ```
 
 ## Troubleshooting
 
 ### Out of Memory
 
-Reduce batch size in experiment CONFIG:
-```python
-CONFIG = {
-    "per_device_train_batch_size": 1,  # Reduce from 2
-    ...
-}
-```
+- Use the `nano` config (smallest model)
+- Reduce batch size in the dashboard or via CLI args
+- Reduce context length
 
 ### CUDA Not Found
 
-Ensure CUDA is installed and visible:
 ```bash
 nvidia-smi
 python -c "import torch; print(torch.cuda.is_available())"
@@ -151,35 +148,16 @@ python -c "import torch; print(torch.cuda.is_available())"
 
 ### Import Errors
 
-Ensure you're in the project root and venv is activated:
+Ensure you're in the project root with the venv activated:
 ```bash
 cd /home/cmf/Work/llm-testing
 source .venv/bin/activate
 ```
 
-## Learning Tips
-
-1. **Read the hypothesis first**: Each experiment file has a HYPOTHESIS section. Read it before running.
-
-2. **Predict before observing**: What do you expect to happen? Write it down.
-
-3. **Update your understanding**: After running, compare results to predictions.
-
-4. **Track questions**: Add new questions to QUESTIONS.md as they arise.
-
-5. **Write self-assessments**: The docs/concepts/ files are templates. Fill them in with your own understanding.
-
 ## Next Steps
 
-After running experiments:
-
-1. Review outputs in `outputs/` directory
-2. Update experiment results sections in the code
-3. Fill in QUESTIONS.md with answers
-4. Read [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md) for the full learning journey
-
-## Need Help?
-
-- Check experiment docstrings for detailed methodology
-- Read concept docs in `docs/concepts/`
-- Review the paper annotation in `docs/papers/`
+1. Run through the [TRAINING-GUIDE.md](TRAINING-GUIDE.md) exercises
+2. Explore the dashboard's run comparison features
+3. Try different model configs and corpora
+4. Move on to attention and probing experiments
+5. Track questions in [QUESTIONS.md](QUESTIONS.md)

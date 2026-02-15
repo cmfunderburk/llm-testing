@@ -31,12 +31,14 @@ For long texts, we use a sliding window approach:
 Reference: Chapter 2 and 5 of Raschka's "Build a Large Language Model (From Scratch)"
 """
 
-import torch
-from torch.utils.data import Dataset, DataLoader
-from typing import Optional, Dict, List, Tuple, Union
-from pathlib import Path
+import json
 import os
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple, Union
+
 import numpy as np
+import torch
+from torch.utils.data import DataLoader, Dataset
 
 from .tokenizer import Tokenizer
 
@@ -215,6 +217,13 @@ CACHE_DIR = CORPUS_DIR / ".cache"
 #   - shakespeare: Complete works of Shakespeare (~1MB)
 #   - pg19_train/pg19_validation/pg19_test: Official PG-19 splits (~11GB total)
 #   - pg19_*_small: Small subset (100 books per split) for testing
+#   - pg19_*_docs: JSONL one-document-per-line PG-19 splits (boundary-safe tokenization)
+#   - pg19_*_small_docs: Small JSONL one-document-per-line PG-19 splits
+# Normalized locally (run: python -m experiments.pretraining.prepare_pg19_normalized ...):
+#   - pg19_*_normalized: Prose-unwrapped PG-19 splits
+#   - pg19_*_small_normalized: Prose-unwrapped small PG-19 splits
+#   - pg19_*_docs_normalized: Prose-unwrapped JSONL doc splits
+#   - pg19_*_small_docs_normalized: Prose-unwrapped small JSONL doc splits
 # Prepared locally (run: python experiments/pretraining/prepare_wikipedia_ga.py):
 #   - wikipedia_ga_intros: Introductions from 50K+ Good Article+ Wikipedia articles (~65MB)
 CORPUS_REGISTRY = {
@@ -230,17 +239,43 @@ CORPUS_REGISTRY = {
     'pg19_train_small': 'pg19_train_small.txt',
     'pg19_validation_small': 'pg19_validation_small.txt',
     'pg19_test_small': 'pg19_test_small.txt',
+    'pg19_train_docs': 'pg19_train_docs.jsonl',
+    'pg19_validation_docs': 'pg19_validation_docs.jsonl',
+    'pg19_test_docs': 'pg19_test_docs.jsonl',
+    'pg19_train_small_docs': 'pg19_train_small_docs.jsonl',
+    'pg19_validation_small_docs': 'pg19_validation_small_docs.jsonl',
+    'pg19_test_small_docs': 'pg19_test_small_docs.jsonl',
+    'pg19_train_normalized': 'pg19_train_normalized.txt',
+    'pg19_validation_normalized': 'pg19_validation_normalized.txt',
+    'pg19_test_normalized': 'pg19_test_normalized.txt',
+    'pg19_train_small_normalized': 'pg19_train_small_normalized.txt',
+    'pg19_validation_small_normalized': 'pg19_validation_small_normalized.txt',
+    'pg19_test_small_normalized': 'pg19_test_small_normalized.txt',
+    'pg19_train_docs_normalized': 'pg19_train_docs_normalized.jsonl',
+    'pg19_validation_docs_normalized': 'pg19_validation_docs_normalized.jsonl',
+    'pg19_test_docs_normalized': 'pg19_test_docs_normalized.jsonl',
+    'pg19_train_small_docs_normalized': 'pg19_train_small_docs_normalized.jsonl',
+    'pg19_validation_small_docs_normalized': 'pg19_validation_small_docs_normalized.jsonl',
+    'pg19_test_small_docs_normalized': 'pg19_test_small_docs_normalized.jsonl',
 }
 
 
-def get_cache_path(corpus_name: str, encoding_name: str = "gpt2") -> Path:
+def get_cache_path(
+    corpus_name: str,
+    encoding_name: str = "gpt2",
+    tokenization_mode: str = "plain_v1",
+) -> Path:
     """Get the cache file path for a tokenized corpus."""
     # Normalize corpus name for cache key
     safe_name = Path(corpus_name).stem if os.path.exists(corpus_name) else corpus_name
-    return CACHE_DIR / f"{safe_name}.{encoding_name}.tokens.pt"
+    return CACHE_DIR / f"{safe_name}.{encoding_name}.{tokenization_mode}.tokens.pt"
 
 
-def load_cached_tokens(corpus_path: Path, encoding_name: str = "gpt2") -> Optional[np.ndarray]:
+def load_cached_tokens(
+    corpus_path: Path,
+    encoding_name: str = "gpt2",
+    tokenization_mode: str = "plain_v1",
+) -> Optional[np.ndarray]:
     """
     Load cached tokenized corpus if available and valid.
 
@@ -248,7 +283,7 @@ def load_cached_tokens(corpus_path: Path, encoding_name: str = "gpt2") -> Option
     Returns numpy array (int32) for memory efficiency.
     """
     corpus_name = corpus_path.stem
-    cache_path = get_cache_path(corpus_name, encoding_name)
+    cache_path = get_cache_path(corpus_name, encoding_name, tokenization_mode)
 
     if not cache_path.exists():
         return None
@@ -266,7 +301,10 @@ def load_cached_tokens(corpus_path: Path, encoding_name: str = "gpt2") -> Option
         token_tensor = torch.load(cache_path, weights_only=True)
         token_ids = token_tensor.numpy()
         del token_tensor  # Free tensor memory immediately
-        print(f"Loaded {len(token_ids):,} tokens from cache for {corpus_name}")
+        print(
+            f"Loaded {len(token_ids):,} tokens from cache for {corpus_name}"
+            f" ({tokenization_mode})"
+        )
         return token_ids
     except Exception as e:
         print(f"Failed to load cache: {e}")
@@ -277,10 +315,27 @@ def load_cached_tokens(corpus_path: Path, encoding_name: str = "gpt2") -> Option
 # Progress Callback Type
 # =============================================================================
 
-from typing import Callable
-
 # Progress callback signature: (phase, bytes_read, total_bytes, tokens_so_far) -> None
 ProgressCallback = Callable[[str, int, int, int], None]
+
+
+def _uses_document_jsonl_tokenization(corpus_path: Path) -> bool:
+    """
+    Detect corpora that should be tokenized per document with explicit EOT.
+
+    Convention:
+      - File extension: .jsonl
+      - Filename contains "_docs" (e.g., pg19_train_docs.jsonl,
+        pg19_train_docs_normalized.jsonl)
+    """
+    return corpus_path.suffix == ".jsonl" and "_docs" in corpus_path.stem
+
+
+def get_tokenization_mode(corpus_path: Path) -> str:
+    """Return a stable tokenization strategy identifier for cache versioning."""
+    if _uses_document_jsonl_tokenization(corpus_path):
+        return "doc_eot_v1"
+    return "plain_v1"
 
 
 def tokenize_corpus_chunked(
@@ -349,10 +404,85 @@ def tokenize_corpus_chunked(
     return np.ascontiguousarray(tokens_array[:token_count])
 
 
-def save_cached_tokens(corpus_name: str, token_ids: Union[List[int], np.ndarray], encoding_name: str = "gpt2"):
+def tokenize_document_jsonl(
+    corpus_path: Path,
+    tokenizer: "Tokenizer",
+    progress_callback: Optional[ProgressCallback] = None,
+) -> np.ndarray:
+    """
+    Tokenize JSONL corpus with one document per line and add EOT between docs.
+
+    Expected record format:
+      {"doc_id": "...", "text": "..."}
+    """
+    total_size = corpus_path.stat().st_size
+    estimated_tokens = max(total_size // 4, 1024)
+    tokens_array = np.zeros(estimated_tokens, dtype=np.int32)
+    token_count = 0
+    bytes_read = 0
+    docs_seen = 0
+    docs_skipped = 0
+    eot = tokenizer.eot_token
+
+    with open(corpus_path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            bytes_read += len(raw_line.encode("utf-8"))
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                docs_skipped += 1
+                continue
+
+            text = payload.get("text")
+            if not isinstance(text, str):
+                docs_skipped += 1
+                continue
+
+            # Remove NUL chars if present; they cause issues in some tools.
+            if "\x00" in text:
+                text = text.replace("\x00", "")
+
+            doc_tokens = tokenizer.encode(text)
+            needed_size = token_count + len(doc_tokens) + 1  # +1 for EOT separator
+            if needed_size > len(tokens_array):
+                new_size = max(needed_size, int(len(tokens_array) * 1.5))
+                new_array = np.zeros(new_size, dtype=np.int32)
+                new_array[:token_count] = tokens_array[:token_count]
+                tokens_array = new_array
+
+            if doc_tokens:
+                doc_len = len(doc_tokens)
+                tokens_array[token_count:token_count + doc_len] = doc_tokens
+                token_count += doc_len
+
+            # Explicitly mark document boundary.
+            tokens_array[token_count] = eot
+            token_count += 1
+            docs_seen += 1
+
+            if progress_callback:
+                progress_callback("tokenizing_docs", bytes_read, total_size, token_count)
+
+    print(
+        f"Document tokenization complete: {docs_seen:,} docs,"
+        f" {token_count:,} tokens (skipped {docs_skipped:,} invalid docs)"
+    )
+    return np.ascontiguousarray(tokens_array[:token_count])
+
+
+def save_cached_tokens(
+    corpus_name: str,
+    token_ids: Union[List[int], np.ndarray],
+    encoding_name: str = "gpt2",
+    tokenization_mode: str = "plain_v1",
+):
     """Save tokenized corpus to cache."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = get_cache_path(corpus_name, encoding_name)
+    cache_path = get_cache_path(corpus_name, encoding_name, tokenization_mode)
 
     # Convert to tensor efficiently for storage
     if isinstance(token_ids, np.ndarray):
@@ -365,7 +495,10 @@ def save_cached_tokens(corpus_name: str, token_ids: Union[List[int], np.ndarray]
     torch.save(token_tensor, cache_path)
 
     size_mb = cache_path.stat().st_size / (1024 * 1024)
-    print(f"Saved {len(token_ids):,} tokens to cache ({size_mb:.1f} MB)")
+    print(
+        f"Saved {len(token_ids):,} tokens to cache ({size_mb:.1f} MB)"
+        f" [{tokenization_mode}]"
+    )
 
 
 def get_corpus_path(corpus_name: str) -> Path:
@@ -498,11 +631,13 @@ def _load_corpus_tokens(
     """
     corpus_path = get_corpus_path(corpus)
 
+    tokenization_mode = get_tokenization_mode(corpus_path)
+
     # Try to load from cache first
     if progress_callback:
         progress_callback("checking_cache", 0, 0, 0)
 
-    token_ids = load_cached_tokens(corpus_path, encoding_name)
+    token_ids = load_cached_tokens(corpus_path, encoding_name, tokenization_mode)
 
     if token_ids is not None:
         if progress_callback:
@@ -513,29 +648,37 @@ def _load_corpus_tokens(
     file_size = corpus_path.stat().st_size
     file_size_mb = file_size / (1024 * 1024)
 
-    # Use chunked tokenization for files > 100MB to avoid memory issues
-    if file_size_mb > 100:
-        print(f"Tokenizing {corpus_path.name} ({file_size_mb:.1f} MB) in chunks...")
-        token_ids = tokenize_corpus_chunked(
+    if tokenization_mode == "doc_eot_v1":
+        print(f"Tokenizing {corpus_path.name} with document boundaries + EOT...")
+        token_ids = tokenize_document_jsonl(
             corpus_path,
             tokenizer,
-            chunk_size_mb=50,
             progress_callback=progress_callback,
         )
     else:
-        # Small file - load all at once (faster for small files)
-        print(f"Tokenizing {corpus_path.name}...")
-        if progress_callback:
-            progress_callback("tokenizing", 0, file_size, 0)
+        # Use chunked tokenization for files > 100MB to avoid memory issues
+        if file_size_mb > 100:
+            print(f"Tokenizing {corpus_path.name} ({file_size_mb:.1f} MB) in chunks...")
+            token_ids = tokenize_corpus_chunked(
+                corpus_path,
+                tokenizer,
+                chunk_size_mb=50,
+                progress_callback=progress_callback,
+            )
+        else:
+            # Small file - load all at once (faster for small files)
+            print(f"Tokenizing {corpus_path.name}...")
+            if progress_callback:
+                progress_callback("tokenizing", 0, file_size, 0)
 
-        with open(corpus_path, 'r', encoding='utf-8') as f:
-            text = f.read()
+            with open(corpus_path, 'r', encoding='utf-8') as f:
+                text = f.read()
 
-        # Convert list to numpy array immediately
-        token_ids = np.array(tokenizer.encode(text), dtype=np.int32)
+            # Convert list to numpy array immediately
+            token_ids = np.array(tokenizer.encode(text), dtype=np.int32)
 
-        if progress_callback:
-            progress_callback("tokenizing", file_size, file_size, len(token_ids))
+            if progress_callback:
+                progress_callback("tokenizing", file_size, file_size, len(token_ids))
 
     print(f"Tokenized into {len(token_ids):,} tokens")
 
@@ -543,7 +686,12 @@ def _load_corpus_tokens(
     if progress_callback:
         progress_callback("saving_cache", 0, 0, len(token_ids))
 
-    save_cached_tokens(corpus_path.stem, token_ids, encoding_name)
+    save_cached_tokens(
+        corpus_path.stem,
+        token_ids,
+        encoding_name,
+        tokenization_mode=tokenization_mode,
+    )
 
     if progress_callback:
         progress_callback("complete", 0, 0, len(token_ids))

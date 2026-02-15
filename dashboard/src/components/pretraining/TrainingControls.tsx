@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useTraining } from '../../context/TrainingContext';
-import type { TrainingConfig, CheckpointInfo, DatasetConfig } from '../../types';
+import type { TrainingConfig, CheckpointInfo, DatasetConfig, PretrainingOptimizer } from '../../types';
 import { MODEL_CONFIGS, DATASETS } from '../../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -14,6 +14,8 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   nano: 'nano (~10M)',
   small: 'small (~50M)',
   medium: 'medium (~124M)',
+  large: 'large (~204M)',
+  xlarge: 'xlarge (~355M)',
 };
 
 // Default context lengths for each model size
@@ -21,6 +23,8 @@ const DEFAULT_CONTEXT_LENGTHS: Record<string, number> = {
   nano: 256,
   small: 512,
   medium: 1024,
+  large: 1024,
+  xlarge: 1024,
 };
 
 interface VRAMEstimate {
@@ -33,13 +37,12 @@ interface VRAMEstimate {
   warning: string | null;
 }
 
-type VRAMOptimizer = 'adamw' | 'adamw_8bit' | 'paged_adamw_8bit';
+const OPTIMIZERS: PretrainingOptimizer[] = ['adamw', 'adamw_8bit', 'paged_adamw_8bit'];
 
 export function TrainingControls() {
   const { status, isLoading, startTraining, pauseTraining, resumeTraining, stopTraining } = useTraining();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showAdvancedGuide, setShowAdvancedGuide] = useState(false);
-  const [vramOptimizer, setVramOptimizer] = useState<VRAMOptimizer>('adamw');
   const guideCloseButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const [selectedDataset, setSelectedDataset] = useState<DatasetConfig>(DATASETS[0]);
@@ -57,6 +60,7 @@ export function TrainingControls() {
     resume_from: undefined,
     attention_impl: 'manual',
     precision: 'fp32',
+    optimizer: 'adamw',
     gradient_checkpointing: false,
     tie_embeddings: false,
   });
@@ -85,7 +89,7 @@ export function TrainingControls() {
   const fetchCheckpoints = async () => {
     setIsLoadingCheckpoints(true);
     try {
-      const configs = ['nano', 'small', 'medium'];
+      const configs = ['nano', 'small', 'medium', 'large', 'xlarge'];
       const allCheckpoints: CheckpointInfo[] = [];
 
       for (const cfg of configs) {
@@ -144,7 +148,7 @@ export function TrainingControls() {
           batch_size: String(config.batch_size),
           context_length: String(contextLength),
           precision: config.precision,
-          optimizer: vramOptimizer,
+          optimizer: config.optimizer,
           attention_impl: config.attention_impl,
           gradient_checkpointing: String(config.gradient_checkpointing),
           tie_embeddings: String(config.tie_embeddings),
@@ -165,7 +169,7 @@ export function TrainingControls() {
     config.batch_size,
     config.context_length,
     config.precision,
-    vramOptimizer,
+    config.optimizer,
     config.attention_impl,
     config.gradient_checkpointing,
     config.tie_embeddings,
@@ -198,6 +202,9 @@ export function TrainingControls() {
     if (checkpoint.corpus) newConfig.corpus = checkpoint.corpus;
     if (checkpoint.batch_size) newConfig.batch_size = checkpoint.batch_size;
     if (checkpoint.context_length) newConfig.context_length = checkpoint.context_length;
+    if (checkpoint.optimizer && OPTIMIZERS.includes(checkpoint.optimizer as PretrainingOptimizer)) {
+      newConfig.optimizer = checkpoint.optimizer as PretrainingOptimizer;
+    }
 
     setConfig(newConfig);
 
@@ -224,6 +231,9 @@ export function TrainingControls() {
     }
     if (checkpoint.context_length && checkpoint.context_length !== config.context_length) {
       warnings.push(`context_length: ${checkpoint.context_length} -> ${config.context_length}`);
+    }
+    if (checkpoint.optimizer && checkpoint.optimizer !== config.optimizer) {
+      warnings.push(`optimizer: ${checkpoint.optimizer} -> ${config.optimizer}`);
     }
 
     setConfigWarnings(warnings);
@@ -290,6 +300,7 @@ export function TrainingControls() {
       ...prev,
       attention_impl: 'sdpa',
       precision: 'bf16',
+      optimizer: 'adamw_8bit',
       gradient_checkpointing: true,
       tie_embeddings: true,
       grad_accum_steps: Math.max(prev.grad_accum_steps, 2),
@@ -487,18 +498,18 @@ export function TrainingControls() {
             </div>
 
             <div className="form-row">
-              <label>VRAM Estimator Optimizer</label>
+              <label>Optimizer</label>
               <select
-                value={vramOptimizer}
-                onChange={(e) => setVramOptimizer(e.target.value as VRAMOptimizer)}
+                value={config.optimizer}
+                onChange={(e) => setConfig({ ...config, optimizer: e.target.value as TrainingConfig['optimizer'] })}
                 disabled={!canStart}
               >
-                <option value="adamw">AdamW (current trainer default)</option>
-                <option value="adamw_8bit">AdamW 8-bit (estimate)</option>
-                <option value="paged_adamw_8bit">Paged AdamW 8-bit (estimate)</option>
+                <option value="adamw">AdamW (full-precision states)</option>
+                <option value="adamw_8bit">AdamW 8-bit</option>
+                <option value="paged_adamw_8bit">Paged AdamW 8-bit</option>
               </select>
               <small className="form-hint">
-                Estimator only for now; pretraining currently trains with AdamW.
+                8-bit variants reduce optimizer memory usage; paged mode can reduce VRAM further with host-memory paging.
               </small>
             </div>
 
@@ -647,6 +658,7 @@ export function TrainingControls() {
                 <li>Keep your desired context length, but lower micro-batch if needed.</li>
                 <li>Switch attention to SDPA first. It reduces attention-memory overhead.</li>
                 <li>Use BF16 precision and enable gradient checkpointing.</li>
+                <li>Switch optimizer to AdamW 8-bit (or paged AdamW 8-bit for tighter VRAM budgets).</li>
                 <li>Use grad accumulation to recover effective batch size.</li>
               </ol>
             </div>
@@ -659,7 +671,7 @@ export function TrainingControls() {
                 <li><strong>Grad Accumulation Steps</strong>: increases effective batch without increasing per-step VRAM.</li>
                 <li><strong>Gradient Checkpointing</strong>: recomputes activations during backward pass to reduce memory usage.</li>
                 <li><strong>Tie Embeddings</strong>: shares input/output embedding weights to cut parameters and memory.</li>
-                <li><strong>VRAM Estimator Optimizer</strong>: estimator-only knob to compare AdamW vs 8-bit/paged scenarios.</li>
+                <li><strong>Optimizer</strong>: <code>adamw</code> is baseline; <code>adamw_8bit</code> and <code>paged_adamw_8bit</code> reduce optimizer-state memory.</li>
               </ul>
             </div>
 

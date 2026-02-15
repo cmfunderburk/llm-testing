@@ -101,8 +101,14 @@ class TrainingConfig(BaseModel):
     resume_from: Optional[str] = None  # checkpoint_id to resume from
     attention_impl: Literal["manual", "sdpa"] = "manual"
     precision: Literal["fp32", "bf16", "fp16"] = "fp32"
+    optimizer: Literal["adamw", "adamw_8bit", "paged_adamw_8bit"] = "adamw"
     gradient_checkpointing: bool = False
     tie_embeddings: bool = False
+    # Intermediate validation during long runs.
+    # 0 = auto (enabled only for long epochs), >0 = evaluate every N optimizer steps.
+    intermediate_val_freq_steps: int = 0
+    # Number of validation batches for intermediate validation checks.
+    intermediate_val_num_batches: int = 20
 
 
 class TrainingStatus(BaseModel):
@@ -129,6 +135,7 @@ class CheckpointInfo(BaseModel):
     corpus: Optional[str] = None
     batch_size: Optional[int] = None
     context_length: Optional[int] = None
+    optimizer: Optional[str] = None
 
 
 class GenerateRequest(BaseModel):
@@ -474,6 +481,7 @@ class TrainingManager:
         import torch
         from experiments.pretraining.model import GPTModel
         from experiments.pretraining.config import get_config, GPTConfig
+        from experiments.pretraining.optim import create_pretraining_optimizer
         from experiments.pretraining.tokenizer import Tokenizer
         from experiments.pretraining.data import create_train_val_dataloaders
         from experiments.pretraining.train import calc_loss_batch, calc_loss_loader, get_lr_scheduler
@@ -559,8 +567,19 @@ class TrainingManager:
                     'epoch': ckpt_data.get('epoch', 0),
                 }
 
+                checkpoint_optimizer_name = ckpt_data.get('optimizer_name') or "adamw"
                 if 'optimizer_state_dict' in ckpt_data:
-                    resumed_optimizer_state = ckpt_data['optimizer_state_dict']
+                    if checkpoint_optimizer_name == config.optimizer:
+                        resumed_optimizer_state = ckpt_data['optimizer_state_dict']
+                    else:
+                        await self.broadcast_metrics({
+                            "type": "warning",
+                            "message": (
+                                "Checkpoint optimizer state not loaded due to optimizer mismatch: "
+                                f"{checkpoint_optimizer_name} -> {config.optimizer}. "
+                                "Training will resume with a fresh optimizer state."
+                            ),
+                        })
 
                 del ckpt_data
                 gc.collect()
@@ -579,6 +598,9 @@ class TrainingManager:
                         warnings.append(f"batch_size: {checkpoint_metadata['batch_size']} → {config.batch_size}")
                     if checkpoint_metadata.get('context_length') and checkpoint_metadata['context_length'] != effective_context_length:
                         warnings.append(f"context_length: {checkpoint_metadata['context_length']} → {effective_context_length}")
+                    checkpoint_optimizer = checkpoint_metadata.get('optimizer_name') or "adamw"
+                    if checkpoint_optimizer != config.optimizer:
+                        warnings.append(f"optimizer: {checkpoint_optimizer} → {config.optimizer}")
 
                 if warnings:
                     await self.broadcast_metrics({
@@ -647,6 +669,11 @@ class TrainingManager:
                             mb_read = bytes_read / (1024 * 1024)
                             mb_total = total_bytes / (1024 * 1024)
                             message = f"Tokenizing '{corpus}': {mb_read:.0f}/{mb_total:.0f} MB ({pct:.1f}%) - {tokens:,} tokens"
+                        elif phase == "tokenizing_docs" and total_bytes > 0:
+                            pct = (bytes_read / total_bytes) * 100
+                            mb_read = bytes_read / (1024 * 1024)
+                            mb_total = total_bytes / (1024 * 1024)
+                            message = f"Tokenizing docs '{corpus}': {mb_read:.0f}/{mb_total:.0f} MB ({pct:.1f}%) - {tokens:,} tokens"
                         elif phase == "saving_cache":
                             message = f"Saving {tokens:,} tokens to cache..."
                         elif phase == "complete":
@@ -700,10 +727,12 @@ class TrainingManager:
                 "message": "Model ready. Starting training...",
             })
 
-            optimizer = torch.optim.AdamW(
+            optimizer = create_pretraining_optimizer(
                 model.parameters(),
+                optimizer_name=config.optimizer,
                 lr=config.learning_rate,
                 weight_decay=0.1,
+                device=device,
             )
 
             # Restore optimizer state if resuming
@@ -751,9 +780,20 @@ class TrainingManager:
             checkpoint_steps.discard(0)
             saved_checkpoints = set()
 
+            # Intermediate validation cadence:
+            # - Explicit config always wins.
+            # - Auto mode (0) only enables for long epochs to avoid slowing short runs.
+            if config.intermediate_val_freq_steps > 0:
+                intermediate_val_freq_steps = config.intermediate_val_freq_steps
+            else:
+                intermediate_val_freq_steps = max(200, updates_per_epoch // 4) if updates_per_epoch >= 400 else 0
+            intermediate_val_num_batches = max(1, config.intermediate_val_num_batches)
+            last_val_eval_step = -1
+
             global_step = start_step
             tokens_seen = 0
             start_time = time.time()
+            elapsed = 0.0
 
             # Now actually starting training - update state
             self.status.state = "running"
@@ -826,6 +866,7 @@ class TrainingManager:
                             optimizer=optimizer,
                             config=model_config,
                             config_name=config.config_name,
+                            optimizer_name=config.optimizer,
                             step=global_step,
                             epoch=epoch + 1,
                             train_loss=self.status.train_loss,
@@ -898,12 +939,48 @@ class TrainingManager:
                     if global_step % 10 == 0:
                         self._sync_run_meta_progress()
 
+                    # Intermediate validation for long runs.
+                    if (
+                        intermediate_val_freq_steps > 0
+                        and global_step > start_step
+                        and global_step % intermediate_val_freq_steps == 0
+                    ):
+                        model.eval()
+                        with torch.no_grad():
+                            val_loss = await loop.run_in_executor(
+                                None,
+                                lambda: calc_loss_loader(
+                                    val_loader,
+                                    model,
+                                    device,
+                                    num_batches=intermediate_val_num_batches,
+                                ),
+                            )
+                        self.status.val_loss = val_loss
+                        last_val_eval_step = global_step
+                        model.train()
+
+                        await self.broadcast_metrics({
+                            "type": "validation",
+                            "step": global_step,
+                            "epoch": epoch + 1,
+                            "val_loss": val_loss,
+                            "train_loss": self.status.train_loss,
+                            "learning_rate": optimizer.param_groups[0]['lr'],
+                            "tokens_seen": tokens_seen,
+                            "tokens_per_sec": tokens_seen / elapsed if elapsed > 0 else 0,
+                            "elapsed_time": elapsed,
+                            "intermediate": True,
+                            "num_batches": intermediate_val_num_batches,
+                        })
+
                     if global_step % 50 == 0:
                         metrics = {
                             "type": "metrics",
                             "step": global_step,
                             "epoch": epoch + 1,
                             "train_loss": step_loss,
+                            "val_loss": self.status.val_loss,
                             "learning_rate": optimizer.param_groups[0]['lr'],
                             "tokens_seen": tokens_seen,
                             "tokens_per_sec": tokens_seen / elapsed if elapsed > 0 else 0,
@@ -942,6 +1019,7 @@ class TrainingManager:
                             optimizer=optimizer,
                             config=model_config,
                             config_name=config.config_name,
+                            optimizer_name=config.optimizer,
                             step=global_step,
                             epoch=epoch + 1,
                             train_loss=self.status.train_loss,
@@ -979,25 +1057,50 @@ class TrainingManager:
                 }
                 await self.broadcast_metrics(generation_msg)
 
-                # Compute validation loss at end of epoch
-                model.eval()
-                with torch.no_grad():
-                    # Limit to 50 batches for speed on large validation sets
-                    val_loss = await loop.run_in_executor(
-                        None,
-                        lambda: calc_loss_loader(val_loader, model, device, num_batches=50)
-                    )
-                self.status.val_loss = val_loss
-                model.train()
+                # Compute validation loss at end of epoch (or re-emit if already evaluated at this step).
+                epoch_elapsed = time.time() - start_time
+                if last_val_eval_step != global_step:
+                    model.eval()
+                    with torch.no_grad():
+                        # Limit to 50 batches for speed on large validation sets
+                        val_loss = await loop.run_in_executor(
+                            None,
+                            lambda: calc_loss_loader(val_loader, model, device, num_batches=50)
+                        )
+                    self.status.val_loss = val_loss
+                    last_val_eval_step = global_step
+                    model.train()
 
-                val_metrics = {
-                    "type": "validation",
-                    "step": global_step,
-                    "epoch": epoch + 1,
-                    "val_loss": val_loss,
-                    "train_loss": self.status.train_loss,
-                }
-                await self.broadcast_metrics(val_metrics)
+                    val_metrics = {
+                        "type": "validation",
+                        "step": global_step,
+                        "epoch": epoch + 1,
+                        "val_loss": val_loss,
+                        "train_loss": self.status.train_loss,
+                        "learning_rate": optimizer.param_groups[0]['lr'],
+                        "tokens_seen": tokens_seen,
+                        "tokens_per_sec": tokens_seen / epoch_elapsed if epoch_elapsed > 0 else 0,
+                        "elapsed_time": epoch_elapsed,
+                        "intermediate": False,
+                        "num_batches": 50,
+                    }
+                    await self.broadcast_metrics(val_metrics)
+                else:
+                    # Same-step intermediate validation already ran; emit a lightweight epoch-end marker
+                    # so the UI/run history still records end-of-epoch validation timing.
+                    await self.broadcast_metrics({
+                        "type": "validation",
+                        "step": global_step,
+                        "epoch": epoch + 1,
+                        "val_loss": self.status.val_loss,
+                        "train_loss": self.status.train_loss,
+                        "learning_rate": optimizer.param_groups[0]['lr'],
+                        "tokens_seen": tokens_seen,
+                        "tokens_per_sec": tokens_seen / epoch_elapsed if epoch_elapsed > 0 else 0,
+                        "elapsed_time": epoch_elapsed,
+                        "intermediate": False,
+                        "num_batches": intermediate_val_num_batches,
+                    })
 
             # Always save final model on completion (100% checkpoint)
             final_checkpoint_path = save_checkpoint(
@@ -1005,6 +1108,7 @@ class TrainingManager:
                 optimizer=optimizer,
                 config=model_config,
                 config_name=config.config_name,
+                optimizer_name=config.optimizer,
                 step=global_step,
                 epoch=config.epochs,
                 train_loss=self.status.train_loss,
@@ -1267,6 +1371,7 @@ async def list_checkpoints_endpoint(config_name: str = "nano"):
         corpus = ckpt.get('corpus')
         batch_size = ckpt.get('batch_size')
         context_length = ckpt.get('context_length')
+        optimizer = ckpt.get('optimizer_name')
 
         if corpus and batch_size and context_length:
             ckpt_id = f"{config_name}_{corpus}_b{batch_size}_ctx{context_length}_step{ckpt['step']}"
@@ -1285,6 +1390,7 @@ async def list_checkpoints_endpoint(config_name: str = "nano"):
             corpus=corpus,
             batch_size=batch_size,
             context_length=context_length,
+            optimizer=optimizer,
         ))
     return result
 
@@ -1344,6 +1450,7 @@ async def get_checkpoint(checkpoint_id: str):
                 corpus=ckpt.get('corpus'),
                 batch_size=ckpt.get('batch_size'),
                 context_length=ckpt.get('context_length'),
+                optimizer=ckpt.get('optimizer_name'),
             )
 
     raise HTTPException(status_code=404, detail="Checkpoint not found")
@@ -1365,7 +1472,7 @@ async def delete_checkpoints(config_name: str = "nano", keep_latest: bool = True
     Delete checkpoints for a given configuration.
 
     Args:
-        config_name: Name of model config ('nano', 'small', 'medium')
+        config_name: Name of model config ('nano', 'small', 'medium', 'large', 'xlarge')
         keep_latest: If True, keeps checkpoint_latest.pt and checkpoint_final.pt
     """
     from experiments.pretraining.checkpoint import DEFAULT_CHECKPOINT_DIR

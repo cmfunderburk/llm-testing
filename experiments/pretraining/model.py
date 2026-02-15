@@ -613,7 +613,7 @@ def create_model(config_name: str = 'nano') -> GPTModel:
     Create a GPT model with the specified configuration.
 
     Args:
-        config_name: One of 'nano', 'small', 'medium', or 'gpt2-124m'
+        config_name: One of 'nano', 'small', 'medium', 'large', 'xlarge', or 'gpt2-124m'
 
     Returns:
         Initialized GPT model

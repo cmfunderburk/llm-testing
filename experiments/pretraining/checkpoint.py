@@ -40,7 +40,7 @@ def get_checkpoint_dir(
     Get the checkpoint directory for a given configuration.
 
     Args:
-        config_name: Name of the model config ('nano', 'small', 'medium')
+        config_name: Name of the model config ('nano', 'small', 'medium', 'large', 'xlarge')
         corpus: Corpus name (e.g., 'verdict', 'tinystories')
         batch_size: Batch size used for training
         context_length: Context length used for training
@@ -76,6 +76,7 @@ def save_checkpoint(
     corpus: Optional[str] = None,
     batch_size: Optional[int] = None,
     context_length: Optional[int] = None,
+    optimizer_name: Optional[str] = None,
 ) -> Path:
     """
     Save a training checkpoint.
@@ -94,6 +95,7 @@ def save_checkpoint(
         optimizer: Optimizer (optional, but required to resume training)
         config: Model configuration
         config_name: Name of config preset used
+        optimizer_name: Optimizer type used for training (e.g., 'adamw_8bit')
         step: Current training step
         epoch: Current epoch
         train_loss: Current training loss
@@ -130,6 +132,7 @@ def save_checkpoint(
         'model_state_dict': model.state_dict(),
         'config': config.to_dict(),
         'config_name': config_name,
+        'optimizer_name': optimizer_name,
         'step': step,
         'epoch': epoch,
         'train_loss': train_loss,
@@ -204,6 +207,7 @@ def load_checkpoint(
     metadata = {
         'config': checkpoint.get('config'),
         'config_name': checkpoint.get('config_name'),
+        'optimizer_name': checkpoint.get('optimizer_name'),
         'step': checkpoint.get('step', 0),
         'epoch': checkpoint.get('epoch', 0),
         'train_loss': checkpoint.get('train_loss'),
@@ -270,6 +274,7 @@ def list_checkpoints(
                         'path': str(path),
                         'step': checkpoint.get('step', 0),
                         'epoch': checkpoint.get('epoch', 0),
+                        'optimizer_name': checkpoint.get('optimizer_name'),
                         'train_loss': checkpoint.get('train_loss'),
                         'val_loss': checkpoint.get('val_loss'),
                         'timestamp': checkpoint.get('timestamp'),

@@ -48,11 +48,11 @@ checkpoints/
 *.safetensors
 *.ckpt
 
-# Large downloadable corpora (use: python -m experiments.pretraining.download_corpora --all)
-experiments/pretraining/corpus/tinystories.txt
-experiments/pretraining/corpus/wikitext2.txt
-experiments/pretraining/corpus/shakespeare.txt
-experiments/pretraining/corpus/pg19_*.txt
+# Pretraining corpora (downloaded/generated locally)
+# Keep only tiny/verdict fixtures tracked in git.
+experiments/pretraining/corpus/*
+!experiments/pretraining/corpus/tiny.txt
+!experiments/pretraining/corpus/verdict.txt
 
 # Tokenization cache
 experiments/pretraining/corpus/.cache/
@@ -86,5 +86,5 @@ DESLOP_EXPERIMENT_NOTES.*
 unsloth_finetune_design_v2-refined
 unsloth_finetune_design_v2-refined.*
 
-# Docs folder (declutter public repo)
-docs/
+# Local reference materials
+docs/book-chapters/

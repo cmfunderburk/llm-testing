@@ -26,7 +26,7 @@ export function GenerationPanel() {
     setIsLoadingCheckpoints(true);
     try {
       // Fetch checkpoints for all config types
-      const configs = ['nano', 'small', 'medium'];
+      const configs = ['nano', 'small', 'medium', 'large', 'xlarge'];
       const allCheckpoints: CheckpointInfo[] = [];
 
       for (const config of configs) {

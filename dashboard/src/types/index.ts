@@ -15,6 +15,7 @@ export type Track = 'pretraining' | 'fine-tuning' | 'attention' | 'probing';
 export type TrainingState = 'idle' | 'loading' | 'running' | 'paused' | 'completed' | 'error';
 export type PretrainingAttentionImpl = 'manual' | 'sdpa';
 export type PretrainingPrecision = 'fp32' | 'bf16' | 'fp16';
+export type PretrainingOptimizer = 'adamw' | 'adamw_8bit' | 'paged_adamw_8bit';
 
 export interface TrainingConfig {
   config_name: string;
@@ -30,6 +31,7 @@ export interface TrainingConfig {
   resume_from?: string;  // checkpoint_id to resume from
   attention_impl: PretrainingAttentionImpl;
   precision: PretrainingPrecision;
+  optimizer: PretrainingOptimizer;
   gradient_checkpointing: boolean;
   tie_embeddings: boolean;
 }
@@ -88,6 +90,7 @@ export interface CheckpointInfo {
   corpus?: string;
   batch_size?: number;
   context_length?: number;
+  optimizer?: string;
 }
 
 export interface RunMetric {
@@ -141,7 +144,7 @@ export interface GenerateResponse {
 }
 
 // Model configs available for pretraining
-export const MODEL_CONFIGS = ['nano', 'small', 'medium'] as const;
+export const MODEL_CONFIGS = ['nano', 'small', 'medium', 'large', 'xlarge'] as const;
 export type ModelConfig = typeof MODEL_CONFIGS[number];
 
 // Dataset definitions with optional train/val splits
@@ -170,6 +173,18 @@ export const DATASETS: DatasetConfig[] = [
     description: 'Project Gutenberg subset (100 books)', size: '~40 MB' },
   { name: 'PG-19 (full)', corpus: 'pg19_train', val_corpus: 'pg19_validation',
     description: 'Project Gutenberg pre-1919 books', size: '~11 GB' },
+  { name: 'PG-19 (small, normalized)', corpus: 'pg19_train_small_normalized', val_corpus: 'pg19_validation_small_normalized',
+    description: 'PG-19 subset with prose line-wrap normalization', size: '~40 MB' },
+  { name: 'PG-19 (full, normalized)', corpus: 'pg19_train_normalized', val_corpus: 'pg19_validation_normalized',
+    description: 'PG-19 with prose line-wrap normalization', size: '~11 GB' },
+  { name: 'PG-19 (small, docs+EOT)', corpus: 'pg19_train_small_docs', val_corpus: 'pg19_validation_small_docs',
+    description: 'PG-19 JSONL docs with explicit document boundaries', size: '~40 MB' },
+  { name: 'PG-19 (full, docs+EOT)', corpus: 'pg19_train_docs', val_corpus: 'pg19_validation_docs',
+    description: 'PG-19 JSONL docs with explicit document boundaries', size: '~11 GB' },
+  { name: 'PG-19 (small, docs+EOT normalized)', corpus: 'pg19_train_small_docs_normalized', val_corpus: 'pg19_validation_small_docs_normalized',
+    description: 'PG-19 JSONL docs with normalization + explicit boundaries', size: '~40 MB' },
+  { name: 'PG-19 (full, docs+EOT normalized)', corpus: 'pg19_train_docs_normalized', val_corpus: 'pg19_validation_docs_normalized',
+    description: 'PG-19 JSONL docs with normalization + explicit boundaries', size: '~11 GB' },
 ];
 
 // Legacy: individual corpus names for backward compatibility
@@ -177,6 +192,12 @@ export const CORPORA = [
   'verdict', 'tiny', 'tinystories', 'wikitext2', 'wikipedia_ga_intros', 'shakespeare',
   'pg19_train', 'pg19_validation', 'pg19_test',
   'pg19_train_small', 'pg19_validation_small', 'pg19_test_small',
+  'pg19_train_normalized', 'pg19_validation_normalized', 'pg19_test_normalized',
+  'pg19_train_small_normalized', 'pg19_validation_small_normalized', 'pg19_test_small_normalized',
+  'pg19_train_docs', 'pg19_validation_docs', 'pg19_test_docs',
+  'pg19_train_small_docs', 'pg19_validation_small_docs', 'pg19_test_small_docs',
+  'pg19_train_docs_normalized', 'pg19_validation_docs_normalized', 'pg19_test_docs_normalized',
+  'pg19_train_small_docs_normalized', 'pg19_validation_small_docs_normalized', 'pg19_test_small_docs_normalized',
 ] as const;
 export type Corpus = typeof CORPORA[number];
 

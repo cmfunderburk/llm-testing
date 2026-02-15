@@ -9,6 +9,8 @@ Available corpora:
 - pg19: Project Gutenberg books pre-1919 with official train/val/test splits
         (~29K books total, ~11GB) - creates pg19_train.txt, pg19_validation.txt, pg19_test.txt
 - pg19_small: Subset of PG-19 (100 books per split) for testing
+- pg19_docs: PG-19 as document JSONL (one book per line) for boundary-safe tokenization
+- pg19_docs_small: Small PG-19 document JSONL subset (100 books per split)
 
 Usage:
     python -m experiments.pretraining.download_corpora           # Download all
@@ -17,13 +19,57 @@ Usage:
     python -m experiments.pretraining.download_corpora shakespeare
     python -m experiments.pretraining.download_corpora pg19
     python -m experiments.pretraining.download_corpora pg19_small
+    python -m experiments.pretraining.download_corpora pg19_docs
+    python -m experiments.pretraining.download_corpora pg19_docs_small
 """
 
 import argparse
-import sys
+import json
 from pathlib import Path
+import time
+from urllib.error import HTTPError, URLError
 
 CORPUS_DIR = Path(__file__).parent / "corpus"
+RETRYABLE_HTTP_STATUS = {408, 429, 500, 502, 503, 504}
+
+
+def _urlopen_with_retry(
+    url: str,
+    *,
+    timeout: float = 60,
+    retries: int = 6,
+    base_delay: float = 1.0,
+    max_delay: float = 30.0,
+    verbose: bool = True,
+    context: str = "request",
+):
+    """Open a URL with retry/backoff for transient network failures."""
+    import urllib.request
+
+    delay = base_delay
+    for attempt in range(1, retries + 1):
+        try:
+            return urllib.request.urlopen(url, timeout=timeout)
+        except HTTPError as exc:
+            if exc.code not in RETRYABLE_HTTP_STATUS or attempt >= retries:
+                raise
+            if verbose:
+                print(
+                    f"    Warning: {context} HTTP {exc.code}; retrying in {delay:.1f}s",
+                    flush=True,
+                )
+        except (URLError, TimeoutError) as exc:
+            if attempt >= retries:
+                raise
+            if verbose:
+                print(
+                    f"    Warning: {context} network error ({exc}); retrying in {delay:.1f}s",
+                    flush=True,
+                )
+        time.sleep(delay)
+        delay = min(delay * 2, max_delay)
+
+    raise RuntimeError(f"Unreachable retry loop for {context}")
 
 
 def download_tinystories(verbose: bool = True) -> Path:
@@ -163,9 +209,8 @@ def download_shakespeare(verbose: bool = True) -> Path:
     return output_path
 
 
-def _list_gcs_files(bucket_url: str, prefix: str) -> list[str]:
+def _list_gcs_files(bucket_url: str, prefix: str, verbose: bool = True) -> list[str]:
     """List all .txt files in a GCS bucket with given prefix."""
-    import urllib.request
     import xml.etree.ElementTree as ET
 
     files = []
@@ -173,7 +218,16 @@ def _list_gcs_files(bucket_url: str, prefix: str) -> list[str]:
 
     while True:
         list_url = f"{bucket_url}/?prefix={prefix}&marker={marker}"
-        with urllib.request.urlopen(list_url) as response:
+        context = f"list files for {prefix}"
+        if marker:
+            context = f"{context} (marker={marker})"
+        with _urlopen_with_retry(
+            list_url,
+            timeout=60,
+            retries=8,
+            verbose=verbose,
+            context=context,
+        ) as response:
             xml_content = response.read().decode("utf-8")
 
         root = ET.fromstring(xml_content)
@@ -204,8 +258,6 @@ def _download_gcs_split(
     verbose: bool = True
 ) -> Path:
     """Download a single split (train/validation/test) from PG-19."""
-    import urllib.request
-
     GCS_BUCKET = "https://storage.googleapis.com/deepmind-gutenberg"
 
     if output_path.exists():
@@ -222,7 +274,7 @@ def _download_gcs_split(
     if verbose:
         print(f"  {split}: Fetching file list...", flush=True)
 
-    files = _list_gcs_files(GCS_BUCKET, f"{split}/")
+    files = _list_gcs_files(GCS_BUCKET, f"{split}/", verbose=verbose)
 
     if verbose:
         print(f"  {split}: Found {len(files):,} books", flush=True)
@@ -240,7 +292,13 @@ def _download_gcs_split(
         for i, file_key in enumerate(files):
             try:
                 url = f"{GCS_BUCKET}/{file_key}"
-                with urllib.request.urlopen(url, timeout=60) as response:
+                with _urlopen_with_retry(
+                    url,
+                    timeout=60,
+                    retries=6,
+                    verbose=verbose,
+                    context=f"download {split}:{file_key}",
+                ) as response:
                     text = response.read().decode("utf-8")
                 f.write(text)
                 f.write("\n\n")
@@ -262,6 +320,206 @@ def _download_gcs_split(
             print(f"  {split}: Done! {size_mb:.1f} MB", flush=True)
         if failed_count > 0:
             print(f"  {split}: {failed_count} books failed", flush=True)
+
+    return output_path
+
+
+def _download_gcs_split_docs(
+    split: str,
+    output_path: Path,
+    max_books: int | None = None,
+    verbose: bool = True,
+) -> Path:
+    """
+    Download a PG-19 split to JSONL, one document per line.
+
+    Each line has:
+      {"doc_id": "...", "text": "..."}
+    """
+    GCS_BUCKET = "https://storage.googleapis.com/deepmind-gutenberg"
+
+    if verbose:
+        print(f"  {split}: Fetching file list...", flush=True)
+
+    files = _list_gcs_files(GCS_BUCKET, f"{split}/", verbose=verbose)
+
+    if verbose:
+        print(f"  {split}: Found {len(files):,} books", flush=True)
+
+    if max_books:
+        files = files[:max_books]
+
+    total_docs = len(files)
+    file_set = set(files)
+    existing_doc_ids: set[str] = set()
+    failed_count = 0
+    open_mode = "w"
+    progress_every_docs = 100
+    progress_every_sec = 30.0
+    meta_path = output_path.with_suffix(output_path.suffix + ".meta.json")
+
+    def _load_meta(path: Path) -> dict | None:
+        if not path.exists():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as mf:
+                payload = json.load(mf)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            return None
+        return None
+
+    def _write_meta(downloaded_docs: int, failed_docs: int, complete: bool) -> None:
+        payload = {
+            "split": split,
+            "total_docs": total_docs,
+            "downloaded_docs": downloaded_docs,
+            "failed_docs": failed_docs,
+            "complete": complete,
+            "updated_at_unix": int(time.time()),
+        }
+        with open(meta_path, "w", encoding="utf-8") as mf:
+            json.dump(payload, mf, indent=2)
+
+    def _read_existing_doc_ids(path: Path) -> set[str]:
+        ids: set[str] = set()
+        with open(path, "r", encoding="utf-8") as ef:
+            for raw_line in ef:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                doc_id = payload.get("doc_id")
+                if isinstance(doc_id, str):
+                    ids.add(doc_id)
+        return ids
+
+    # Fast path: completed metadata marker
+    meta = _load_meta(meta_path)
+    if output_path.exists() and meta:
+        if (
+            meta.get("complete") is True
+            and int(meta.get("total_docs", -1)) == total_docs
+            and int(meta.get("downloaded_docs", -1)) >= total_docs
+        ):
+            if verbose:
+                size_bytes = output_path.stat().st_size
+                size_gb = size_bytes / (1024 * 1024 * 1024)
+                if size_gb >= 1:
+                    print(f"  {split}: Already complete ({size_gb:.2f} GB)", flush=True)
+                else:
+                    size_mb = size_bytes / (1024 * 1024)
+                    print(f"  {split}: Already complete ({size_mb:.1f} MB)", flush=True)
+            return output_path
+
+    if output_path.exists():
+        if verbose:
+            print(f"  {split}: Existing file found; scanning for resume state...", flush=True)
+        existing_doc_ids = _read_existing_doc_ids(output_path) & file_set
+        if len(existing_doc_ids) >= total_docs:
+            _write_meta(downloaded_docs=total_docs, failed_docs=0, complete=True)
+            if verbose:
+                size_bytes = output_path.stat().st_size
+                size_gb = size_bytes / (1024 * 1024 * 1024)
+                if size_gb >= 1:
+                    print(f"  {split}: Already complete ({size_gb:.2f} GB)", flush=True)
+                else:
+                    size_mb = size_bytes / (1024 * 1024)
+                    print(f"  {split}: Already complete ({size_mb:.1f} MB)", flush=True)
+            return output_path
+
+        if existing_doc_ids:
+            open_mode = "a"
+            if verbose:
+                print(
+                    f"  {split}: Resuming from {len(existing_doc_ids):,}/{total_docs:,} docs",
+                    flush=True,
+                )
+        else:
+            # Existing file has no recognizable doc IDs for this split; start clean.
+            if verbose:
+                print(f"  {split}: Existing file unusable for resume; restarting split", flush=True)
+            output_path.unlink(missing_ok=True)
+
+    files_to_download = [file_key for file_key in files if file_key not in existing_doc_ids]
+    books_to_download = len(files_to_download)
+
+    if verbose:
+        if open_mode == "a":
+            print(
+                f"  {split}: Downloading remaining {books_to_download:,} books...",
+                flush=True,
+            )
+        else:
+            print(f"  {split}: Downloading {books_to_download:,} books...", flush=True)
+
+    start_time = time.time()
+    last_progress_time = start_time
+    with open(output_path, open_mode, encoding="utf-8") as f:
+        for i, file_key in enumerate(files_to_download):
+            try:
+                url = f"{GCS_BUCKET}/{file_key}"
+                with _urlopen_with_retry(
+                    url,
+                    timeout=60,
+                    retries=6,
+                    verbose=verbose,
+                    context=f"download {split}:{file_key}",
+                ) as response:
+                    text = response.read().decode("utf-8", errors="replace")
+                # NUL bytes can appear in rare books and break downstream plain-text tools.
+                text = text.replace("\x00", "")
+                payload = {"doc_id": file_key, "text": text}
+                f.write(json.dumps(payload, ensure_ascii=False))
+                f.write("\n")
+                existing_doc_ids.add(file_key)
+            except Exception as e:
+                failed_count += 1
+                if verbose and failed_count <= 3:
+                    print(f"    Warning: Failed {file_key}: {e}", flush=True)
+
+            now = time.time()
+            done_docs = len(existing_doc_ids)
+            should_report = (
+                (i + 1) % progress_every_docs == 0
+                or (i + 1) == books_to_download
+                or (now - last_progress_time) >= progress_every_sec
+            )
+            if should_report and verbose:
+                elapsed = now - start_time
+                docs_per_sec = done_docs / elapsed if elapsed > 0 else 0.0
+                print(
+                    f"  {split}: Progress {done_docs:,} / {total_docs:,}"
+                    f" ({docs_per_sec:.1f} docs/s)",
+                    flush=True,
+                )
+                _write_meta(downloaded_docs=done_docs, failed_docs=failed_count, complete=False)
+                last_progress_time = now
+
+    complete = len(existing_doc_ids) >= total_docs
+
+    size_bytes = output_path.stat().st_size
+    size_gb = size_bytes / (1024 * 1024 * 1024)
+    if verbose:
+        if not complete:
+            print(
+                f"  {split}: Incomplete ({len(existing_doc_ids):,}/{total_docs:,} docs)."
+                " Re-run same command to resume.",
+                flush=True,
+            )
+        if size_gb >= 1:
+            print(f"  {split}: Done! {size_gb:.2f} GB", flush=True)
+        else:
+            size_mb = size_bytes / (1024 * 1024)
+            print(f"  {split}: Done! {size_mb:.1f} MB", flush=True)
+        if failed_count > 0:
+            print(f"  {split}: {failed_count} books failed", flush=True)
+
+    _write_meta(downloaded_docs=min(len(existing_doc_ids), total_docs), failed_docs=failed_count, complete=complete)
 
     return output_path
 
@@ -324,12 +582,56 @@ def download_pg19_small(verbose: bool = True) -> dict[str, Path]:
     return download_pg19(verbose=verbose, max_books=100, suffix="_small")
 
 
+def download_pg19_docs(verbose: bool = True, max_books: int | None = None, suffix: str = "") -> dict[str, Path]:
+    """
+    Download PG-19 as JSONL with explicit document boundaries.
+
+    Creates:
+      - pg19_train{suffix}_docs.jsonl
+      - pg19_validation{suffix}_docs.jsonl
+      - pg19_test{suffix}_docs.jsonl
+
+    This format is recommended for boundary-safe tokenization because each
+    book is a separate record.
+    """
+    CORPUS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if verbose:
+        print("Downloading PG-19 (document JSONL) from Google Cloud Storage...", flush=True)
+        print("  Bucket: gs://deepmind-gutenberg", flush=True)
+        if max_books:
+            print(f"  Limiting to {max_books:,} books per split", flush=True)
+        print("", flush=True)
+
+    splits = ["train", "validation", "test"]
+    paths = {}
+
+    for split in splits:
+        output_path = CORPUS_DIR / f"pg19_{split}{suffix}_docs.jsonl"
+        _download_gcs_split_docs(split, output_path, max_books, verbose)
+        paths[split] = output_path
+        if verbose:
+            print("", flush=True)
+
+    if verbose:
+        print("PG-19 document JSONL download complete!", flush=True)
+
+    return paths
+
+
+def download_pg19_docs_small(verbose: bool = True) -> dict[str, Path]:
+    """Download a small (100-book/split) PG-19 document JSONL subset."""
+    return download_pg19_docs(verbose=verbose, max_books=100, suffix="_small")
+
+
 DOWNLOADERS = {
     "tinystories": download_tinystories,
     "wikitext2": download_wikitext2,
     "shakespeare": download_shakespeare,
     "pg19": download_pg19,
     "pg19_small": download_pg19_small,
+    "pg19_docs": download_pg19_docs,
+    "pg19_docs_small": download_pg19_docs_small,
 }
 
 
@@ -339,12 +641,28 @@ def download_all(verbose: bool = True):
     print("Downloading all corpora")
     print("=" * 60)
 
-    for name, downloader in DOWNLOADERS.items():
+    # Keep --all focused on the primary text corpora.
+    # PG-19 docs variants are opt-in because they duplicate large downloads.
+    corpus_order = [
+        "tinystories",
+        "wikitext2",
+        "shakespeare",
+        "pg19",
+        "pg19_small",
+    ]
+
+    for name in corpus_order:
+        downloader = DOWNLOADERS[name]
         print(f"\n[{name}]")
         try:
             downloader(verbose=verbose)
         except Exception as e:
             print(f"  ERROR: {e}")
+
+    print("\n[pg19_docs variants]")
+    print("  Skipped by default in --all (run explicitly if needed):")
+    print("    python -m experiments.pretraining.download_corpora pg19_docs")
+    print("    python -m experiments.pretraining.download_corpora pg19_docs_small")
 
     print("\n" + "=" * 60)
     print("Download complete!")
@@ -356,13 +674,37 @@ def list_corpora():
     print("Available corpora:")
     print("-" * 40)
 
+    def _bundle_status(paths: list[Path]) -> str:
+        missing = [p for p in paths if not p.exists()]
+        if missing:
+            return "Not downloaded"
+        total_bytes = sum(p.stat().st_size for p in paths)
+        total_gb = total_bytes / (1024 * 1024 * 1024)
+        if total_gb >= 1:
+            return f"Downloaded ({total_gb:.2f} GB total)"
+        total_mb = total_bytes / (1024 * 1024)
+        return f"Downloaded ({total_mb:.1f} MB total)"
+
     for name in DOWNLOADERS.keys():
-        path = CORPUS_DIR / f"{name}.txt"
-        if path.exists():
-            size_mb = path.stat().st_size / (1024 * 1024)
-            status = f"Downloaded ({size_mb:.1f} MB)"
+        if name == "pg19":
+            paths = [CORPUS_DIR / f"pg19_{split}.txt" for split in ("train", "validation", "test")]
+            status = _bundle_status(paths)
+        elif name == "pg19_small":
+            paths = [CORPUS_DIR / f"pg19_{split}_small.txt" for split in ("train", "validation", "test")]
+            status = _bundle_status(paths)
+        elif name == "pg19_docs":
+            paths = [CORPUS_DIR / f"pg19_{split}_docs.jsonl" for split in ("train", "validation", "test")]
+            status = _bundle_status(paths)
+        elif name == "pg19_docs_small":
+            paths = [CORPUS_DIR / f"pg19_{split}_small_docs.jsonl" for split in ("train", "validation", "test")]
+            status = _bundle_status(paths)
         else:
-            status = "Not downloaded"
+            path = CORPUS_DIR / f"{name}.txt"
+            if path.exists():
+                size_mb = path.stat().st_size / (1024 * 1024)
+                status = f"Downloaded ({size_mb:.1f} MB)"
+            else:
+                status = "Not downloaded"
         print(f"  {name}: {status}")
 
     # Also show built-in corpora
