@@ -1458,6 +1458,205 @@ h3 { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--color-text-muted)
 }
 
 /* =============================================================================
+   MicroGPT Education Page
+   ============================================================================= */
+
+.microgpt-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.microgpt-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.microgpt-meta-item {
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.microgpt-meta-label {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.microgpt-meta-item code {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  word-break: break-word;
+}
+
+.microgpt-section-bar {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.microgpt-section-bar .button-group {
+  margin-top: 0.5rem;
+}
+
+.microgpt-section-summary {
+  margin-top: 0.8rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+}
+
+.microgpt-section-summary h3 {
+  margin: 0 0 0.5rem;
+  color: var(--color-text);
+}
+
+.microgpt-section-summary p {
+  margin: 0.35rem 0;
+  font-size: 0.86rem;
+  color: var(--color-text-muted);
+}
+
+.microgpt-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.microgpt-code-viewer {
+  background: #10172d;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  max-height: 680px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.microgpt-code-row {
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  gap: 0.65rem;
+  padding: 0.1rem 0.6rem;
+}
+
+.microgpt-code-row:hover {
+  background: rgba(74, 158, 255, 0.08);
+}
+
+.microgpt-line-number {
+  color: var(--color-text-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.microgpt-code-text {
+  white-space: pre;
+}
+
+.microgpt-markdown {
+  overflow: auto;
+  background: #10172d;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.9rem;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  max-height: 680px;
+}
+
+.microgpt-markdown h1,
+.microgpt-markdown h2,
+.microgpt-markdown h3,
+.microgpt-markdown h4 {
+  color: var(--color-text);
+  margin: 0.9rem 0 0.55rem;
+}
+
+.microgpt-markdown p,
+.microgpt-markdown ul,
+.microgpt-markdown ol {
+  margin: 0.5rem 0;
+}
+
+.microgpt-markdown ul,
+.microgpt-markdown ol {
+  padding-left: 1.35rem;
+  list-style-position: inside;
+}
+
+.microgpt-markdown ul ul,
+.microgpt-markdown ol ol,
+.microgpt-markdown ul ol,
+.microgpt-markdown ol ul {
+  padding-left: 1rem;
+  margin-top: 0.3rem;
+}
+
+.microgpt-markdown li {
+  margin: 0.2rem 0;
+  text-indent: -0.1rem;
+}
+
+.microgpt-markdown code {
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.microgpt-markdown pre {
+  background: #0c1226;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem;
+  overflow: auto;
+}
+
+.microgpt-markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.microgpt-markdown code:not(pre code) {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+}
+
+.microgpt-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2rem 0;
+}
+
+.microgpt-markdown .katex {
+  color: var(--color-text);
+}
+
+.microgpt-reference-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.microgpt-reference-pane {
+  margin-top: 0.5rem;
+  max-height: 520px;
+}
+
+/* =============================================================================
    Responsive
    ============================================================================= */
 
@@ -1467,6 +1666,11 @@ h3 { font-size: 1.125rem; margin-bottom: 0.75rem; color: var(--color-text-muted)
   }
 
   .dashboard-view {
+    grid-template-columns: 1fr;
+  }
+
+  .microgpt-grid,
+  .microgpt-meta-grid {
     grid-template-columns: 1fr;
   }
 }

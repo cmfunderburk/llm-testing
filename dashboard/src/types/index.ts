@@ -6,7 +6,17 @@
 // Common Types
 // =============================================================================
 
-export type Track = 'pretraining' | 'fine-tuning' | 'attention' | 'probing';
+export type Track = 'pretraining' | 'fine-tuning' | 'attention' | 'probing' | 'microgpt';
+
+export interface MicroGPTArtifactResponse {
+  source_path: string;
+  docs_path: string;
+  source_sha256: string;
+  source_line_count: number;
+  docs_line_count: number;
+  source: string;
+  docs_markdown: string;
+}
 
 // =============================================================================
 // Pretraining Types

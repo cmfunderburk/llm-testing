@@ -18,6 +18,7 @@ export function Header({ activeTrack, isConnected, connectionError }: HeaderProp
     'fine-tuning': 'Fine-Tuning',
     attention: 'Attention',
     probing: 'Probing',
+    microgpt: 'MicroGPT',
   };
 
   return (

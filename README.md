@@ -85,6 +85,7 @@ The dashboard provides a real-time web UI for all learning tracks, with WebSocke
 ```
 
 Features:
+- **MicroGPT (Canonical)**: Source-of-truth educational entrypoint for `misc/microgpt.py` with line-by-line graduate-level companion docs
 - **Pretraining**: Configure and launch GPT training runs, watch loss curves and sample generations update live, compare past runs, resume from checkpoints
 - **Fine-tuning**: QLoRA experiments with real-time metrics
 - **Attention**: Heatmap visualization of attention patterns
@@ -108,6 +109,13 @@ python -m experiments.pretraining.train --config nano --corpus tinystories --epo
 ```
 
 See [TRAINING-GUIDE.md](TRAINING-GUIDE.md) for detailed walkthrough and learning exercises.
+
+### Canonical MicroGPT Entry (Educational)
+
+The dashboard includes a dedicated **MicroGPT** track that treats `misc/microgpt.py` as canonical source and surfaces a detailed companion guide:
+
+- Source file: [`misc/microgpt.py`](misc/microgpt.py)
+- Companion doc: [`docs/microgpt_line_by_line.md`](docs/microgpt_line_by_line.md)
 
 ### Fine-Tuning Mechanics
 

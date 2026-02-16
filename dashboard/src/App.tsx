@@ -8,7 +8,13 @@ import { useState } from 'react';
 import { TrainingProvider, useTraining } from './context/TrainingContext';
 import { FineTuningProvider } from './context/FineTuningContext';
 import { Layout } from './components/layout';
-import { PretrainingPage, FineTuningPage, AttentionPage, ProbingPage } from './pages';
+import {
+  PretrainingPage,
+  FineTuningPage,
+  AttentionPage,
+  ProbingPage,
+  MicroGPTPage,
+} from './pages';
 import type { Track } from './types';
 import './App.css';
 
@@ -29,6 +35,8 @@ function AppContent() {
         return <AttentionPage />;
       case 'probing':
         return <ProbingPage />;
+      case 'microgpt':
+        return <MicroGPTPage />;
       default:
         return <PretrainingPage />;
     }

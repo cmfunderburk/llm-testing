@@ -24,7 +24,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .config import config
-from .routers import pretraining_router, attention_router, probing_router, fine_tuning_router
+from .routers import (
+    pretraining_router,
+    attention_router,
+    probing_router,
+    fine_tuning_router,
+    education_router,
+)
 from .routers.pretraining import websocket_training
 from .routers.fine_tuning import websocket_fine_tuning
 from .services import model_manager
@@ -56,7 +62,7 @@ class HealthResponse(BaseModel):
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info("Starting LLM Learning Lab API server...")
-    logger.info(f"Available tracks: pretraining, fine-tuning, attention, probing")
+    logger.info("Available tracks: pretraining, fine-tuning, attention, probing, education")
     yield
     logger.info("Shutting down API server...")
 
@@ -95,6 +101,7 @@ for building intuition about how LLMs work.
 - **Fine-Tuning** (`/api/fine-tuning/*`): QLoRA fine-tuning with real-time metrics
 - **Attention** (`/api/attention/*`): Extract and visualize attention patterns
 - **Probing** (`/api/probing/*`): Analyze intermediate activations and representations
+- **Education** (`/api/education/*`): Canonical educational artifacts (e.g., microgpt)
 
 ## WebSocket
 
@@ -119,6 +126,7 @@ for building intuition about how LLMs work.
     app.include_router(fine_tuning_router)
     app.include_router(attention_router)
     app.include_router(probing_router)
+    app.include_router(education_router)
 
     return app
 
@@ -137,7 +145,7 @@ async def health_check():
         status="ok",
         timestamp=datetime.now().isoformat(),
         version="0.2.0",
-        tracks=["pretraining", "fine-tuning", "attention", "probing"],
+        tracks=["pretraining", "fine-tuning", "attention", "probing", "education"],
     )
 
 
@@ -153,6 +161,7 @@ async def root():
             "fine_tuning": "/api/fine-tuning",
             "attention": "/api/attention",
             "probing": "/api/probing",
+            "education": "/api/education",
         },
     }
 
