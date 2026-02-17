@@ -18,6 +18,7 @@ class APIConfig:
 
     # CORS settings
     cors_origins: List[str] = None
+    cors_origin_regex: str | None = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
     # Model settings
     default_model: str = "unsloth/Qwen2.5-7B-Instruct"
