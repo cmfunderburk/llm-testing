@@ -1,218 +1,174 @@
 # GPT Pretraining Guide
 
-This guide walks through running pretraining experiments in the LLM Learning Lab. The goal is to build intuition about training dynamics, not to train production models.
+This guide focuses on the expanded pretraining surface in the LLM Learning Lab.
+
+Goal: build intuition for transformer training dynamics, not production-scale training.
 
 ## Quick Start
 
-```bash
-# Start the dashboard
-./run-dashboard.sh
+### Dashboard path (recommended)
 
-# Open http://localhost:5173 and navigate to Pretraining
+```bash
+./run-dashboard.sh
 ```
 
-Or run training directly from Python:
+Open the frontend URL and go to **Pretraining**.
+
+### CLI path
 
 ```bash
 source .venv/bin/activate
 python -m experiments.pretraining.train --config nano --corpus verdict --epochs 3
 ```
 
+## Dashboard vs CLI
+
+| Surface | Best For | Notes |
+|---------|----------|-------|
+| Dashboard (`/api/pretraining/*`) | Interactive runs, VRAM planning, checkpoint resume, run comparisons | Most feature-complete pretraining workflow |
+| CLI (`python -m experiments.pretraining.train`) | Fast scripted smoke tests and simple experiments | Narrower config surface than dashboard |
+
 ## Model Configurations
 
-| Config | Parameters | Context | Training Time* | Use Case |
-|--------|------------|---------|----------------|----------|
-| nano   | ~10M       | 256     | Minutes        | Quick iteration, testing ideas |
-| small  | ~50M       | 512     | 30-60 min      | Moderate experiments |
-| medium | ~124M      | 1024    | Hours          | Serious experiments |
+| Config | Params (approx) | Default Context | Typical Use |
+|--------|------------------|-----------------|-------------|
+| `nano` | ~10M | 256 | Pipeline validation, quick iteration |
+| `small` | ~50M | 512 | Medium-speed experiments |
+| `medium` | ~124M | 1024 | Serious learning runs |
+| `large` | ~204M | 1024 | Capacity experiments (VRAM-sensitive) |
+| `xlarge` | ~355M | 1024 | Stretch experiments, requires careful settings |
 
-*On RTX 5060 Ti 16GB with "verdict" corpus
+Recommendation: start with `nano`, then scale one step at a time.
 
-**Recommendation**: Start with `nano` to verify everything works, then scale up.
+## Corpus Options
 
-## Included Corpora
+### Built-in quick corpora
 
-### verdict (default)
-- **Source**: "The Verdict" by Edith Wharton (Project Gutenberg)
-- **Size**: ~3K tokens
-- **Good for**: Quick testing, verifying training works
-- **Limitation**: Too small for meaningful learning; model will memorize
+- `verdict`: tiny literary corpus for fast sanity checks
+- `tiny`: minimal smoke-test corpus
 
-### tiny
-- **Source**: A few sentences about machine learning
-- **Size**: ~100 tokens
-- **Good for**: Smoke testing the pipeline
-- **Limitation**: Essentially useless for learning
-
-## Downloadable Datasets
-
-The included corpora (verdict, tiny) are intentionally small for quick iteration. For more meaningful experiments, download larger datasets:
+### Downloadable corpora
 
 ```bash
-# Download all datasets at once
-python -m experiments.pretraining.download_corpora --all
-
-# Or download individually
+python -m experiments.pretraining.download_corpora --list
 python -m experiments.pretraining.download_corpora tinystories
 python -m experiments.pretraining.download_corpora wikitext2
 python -m experiments.pretraining.download_corpora shakespeare
-
-# Check what's available
-python -m experiments.pretraining.download_corpora --list
+python -m experiments.pretraining.download_corpora pg19_small
+python -m experiments.pretraining.download_corpora pg19_docs_small
 ```
 
-### TinyStories (Recommended for Learning)
+Notable options:
 
-**Size**: ~1.8 GB (2.1M stories)
+- `tinystories`: recommended first meaningful corpus
+- `wikitext2`: compact benchmark-style corpus
+- `shakespeare`: stylized corpus for qualitative sampling checks
+- `wikipedia_ga_intros`: prepared locally via project script
+- PG-19 families:
+  - flat text splits (`pg19_*`)
+  - document-boundary JSONL splits (`pg19_*_docs`)
+  - normalized variants (`*_normalized`)
 
-**What**: Synthetic short stories written by GPT-3.5/4, designed for training small language models.
+## Suggested Run Progression
 
-**Why it's great for learning**:
-- Specifically designed to show what small models (10M-100M params) can learn
-- Clean, consistent grammar with limited vocabulary
-- Stories follow coherent narratives, so you can evaluate quality subjectively
-- The paper "TinyStories: How Small Can Language Models Be and Still Speak Coherent English?" shows nano-scale models can produce grammatical text
-
-### WikiText-2
-
-**Size**: ~12 MB
-
-**What**: Wikipedia articles from the "Good" and "Featured" categories.
-
-**Why it's useful**:
-- Standard benchmark for language modeling
-- Well-structured expository text
-- Good variety of topics and sentence structures
-
-### Shakespeare
-
-**Size**: ~1 MB
-
-**What**: Complete works of Shakespeare.
-
-**Why it's interesting**:
-- Distinctive patterns (meter, archaic vocabulary)
-- Easy to evaluate: does generated text "sound Shakespearean"?
-- Public domain, well-studied
-
-### Custom Text Files
-
-Any plain text file works. Place it in `experiments/pretraining/corpus/` and either:
-1. Add it to `CORPUS_REGISTRY` in `data.py`
-2. Or pass the full path directly: `--corpus /path/to/your/text.txt`
-
-Good sources for public domain text:
-- [Project Gutenberg](https://www.gutenberg.org/) - Classic literature
-- [Internet Archive](https://archive.org/details/texts) - Various texts
-- [Common Crawl](https://commoncrawl.org/) - Web text (requires filtering)
-
-## Training Run Walkthrough
-
-### Run 1: Verify the Pipeline (5 minutes)
+### Run 1: Smoke test
 
 ```bash
-# Via dashboard
-./run-dashboard.sh
-# Set: config=nano, corpus=verdict, epochs=3
-
-# Or via CLI
 python -m experiments.pretraining.train --config nano --corpus verdict --epochs 3
 ```
 
-**What to observe**:
-- Loss should decrease rapidly (overfitting to small corpus)
-- Final loss should be very low (<0.5) since model memorizes the text
-- Generated text should reproduce fragments from the training data
+Expected behavior:
 
-### Run 2: Actual Learning with TinyStories (30-60 minutes)
+- rapid train loss drop
+- obvious memorization on a tiny corpus
+
+### Run 2: First meaningful run
 
 ```bash
-# First, download TinyStories (see above)
+python -m experiments.pretraining.download_corpora tinystories
 python -m experiments.pretraining.train --config nano --corpus tinystories --epochs 1
 ```
 
-**What to observe**:
-- Loss decreases more gradually
-- Loss won't go as low (model can't memorize 2M stories)
-- Generated text should be grammatical but novel (not memorized)
-- Watch for:
-  - Coherent sentence structure
-  - Proper punctuation
-  - Story-like flow ("Once upon a time...")
+Expected behavior:
 
-### Run 3: Compare Model Sizes
+- slower, smoother loss descent
+- generation quality improves without direct memorization
 
-Train the same corpus with different configs:
+### Run 3: Controlled scaling
 
-```bash
-python -m experiments.pretraining.train --config nano --corpus tinystories --epochs 1
-python -m experiments.pretraining.train --config small --corpus tinystories --epochs 1
-```
+Train on the same corpus while changing config size (`nano` -> `small` -> `medium`) and compare:
 
-**What to observe**:
-- Larger model has lower training loss
-- Does lower loss = better generations? (subjectively evaluate)
-- Training time differences
+- final train/val losses
+- generation quality
+- throughput and wall-clock time
 
-## Metrics to Watch
+Use dashboard run-history overlays to compare curves directly.
 
-### Training Loss
-- **High and not decreasing**: Learning rate too low, or bug in code
-- **Decreasing smoothly**: Normal training
-- **Decreasing then jumping up**: Learning rate too high
-- **Very low (<0.1)**: Probably overfitting/memorizing
+## Advanced Dashboard Controls (Pretraining)
 
-### Validation Loss
-- **Tracks training loss**: Good generalization
-- **Diverges from training loss**: Overfitting starting
-- **Validation loss increases while train decreases**: Clear overfitting
+The dashboard exposes controls not available in the basic CLI path:
 
-### Tokens/Second
-- Measures throughput
-- Useful for comparing batch sizes and optimizations
+- Optimizer: `adamw`, `adamw_8bit`, `paged_adamw_8bit`
+- Precision: `fp32`, `bf16`, `fp16`
+- Attention backend: `manual` vs `sdpa`
+- Gradient checkpointing toggle
+- Tied embeddings toggle
+- Resume from checkpoint + config mismatch warnings
+- Manual "save now" checkpoint
+- Intermediate validation frequency controls
 
-### Sample Generations
-- The most informative metric for understanding what the model learned
-- Watch how they evolve during training:
-  - Early: Random gibberish
-  - Middle: Word-like tokens, broken grammar
-  - Late: Coherent phrases, sentences
+Use `estimate-vram` feedback before launching high-memory runs.
+
+## Metrics That Matter
+
+### Training loss
+
+- flat/high: likely LR or data/config issue
+- noisy spikes: often too aggressive LR or unstable mixed precision
+- very low on tiny corpus: memorization, not necessarily generalization
+
+### Validation loss
+
+- tracks train loss: decent fit/generalization signal
+- diverges while train loss drops: overfitting
+
+### Tokens/second
+
+- proxy for training throughput
+- useful for comparing config and optimization settings
+
+### Sample generations
+
+- fastest qualitative check of whether improvements are meaningful
+- review samples at similar steps across runs for fair comparison
 
 ## Common Issues
 
-### Out of Memory
-- Reduce batch size
-- Use smaller context length
-- Use nano config instead of small/medium
+### Out of memory
 
-### Training Loss Stuck
-- Learning rate may be too low
-- Try warmup_steps=100 with higher base LR
-- Check that data is loading correctly
+- reduce `batch_size` and/or `context_length`
+- drop model size (`xlarge` -> `large` -> `medium` ...)
+- switch `attention_impl` to `sdpa`
+- enable `gradient_checkpointing`
+- use `bf16` when supported
 
-### Generated Text is Gibberish
-- Model needs more training
-- Corpus may be too diverse for model size
-- Try lower temperature for generation
+### Resume instability
 
-### Training is Slow
-- Reduce context length (biggest impact)
-- Reduce batch size (trades memory for speed)
-- Ensure GPU is being used (check nvidia-smi)
+When resuming, keep `corpus`, `batch_size`, `context_length`, and optimizer aligned unless you intentionally want a changed trajectory.
+
+### Slow tokenization on large corpora
+
+The pipeline supports chunked tokenization + caching. First run can be long; subsequent runs should reuse token cache unless source files changed.
 
 ## Learning Exercises
 
-1. **Memorization vs Generalization**: Train nano on verdict until loss is ~0.1. Generate text. Is it memorized or novel? Now train on TinyStories. What's different?
-
-2. **Learning Rate Sensitivity**: Train the same config/corpus with LR 1e-4, 3e-4, 1e-3, 3e-3. Plot loss curves. Where does training become unstable?
-
-3. **Context Length Impact**: Train nano with context_length=64, 128, 256. How does it affect what the model learns? Can you see differences in generated text coherence?
-
-4. **Scaling Laws**: Train nano, small, medium on the same corpus for the same number of tokens. Plot loss vs parameters. Does it match expected scaling behavior?
+1. Memorization vs generalization: compare `verdict` and `tinystories` runs at similar step counts.
+2. Attention backend tradeoff: run same config with `manual` and `sdpa`; compare memory and throughput.
+3. Precision tradeoff: compare `fp32` vs `bf16` stability and speed on one corpus/config.
+4. Checkpoint resume behavior: pause, save checkpoint, resume, and verify curve continuity.
 
 ## Next Steps
 
-After exploring pretraining:
-- **Attention Track**: Visualize what attention patterns emerge in your trained models
-- **Probing Track**: Examine activations to understand what representations form
-- **Fine-tuning Track**: Take a pretrained checkpoint and fine-tune on a specific task
+1. Move to **Attention** with a trained checkpoint to inspect head behavior.
+2. Move to **Probing** to inspect layerwise representation changes.
+3. Use **Fine-Tuning** to contrast adaptation dynamics against pretraining dynamics.

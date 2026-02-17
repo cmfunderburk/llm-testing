@@ -1,107 +1,82 @@
 # Getting Started
 
-Quick guide to setting up and running your first experiments.
+Practical setup and first-run flow for the current LLM Learning Lab.
 
 ## Prerequisites
 
 - Python 3.12+ (see `.python-version`)
-- NVIDIA GPU with 16GB+ VRAM
-- CUDA toolkit installed
+- NVIDIA GPU (16GB VRAM recommended for the full dashboard experience)
+- CUDA toolkit + working NVIDIA driver
 - [uv](https://docs.astral.sh/uv/) package manager
-- Node.js 18+ (for the dashboard)
-- ~20GB disk space for models and corpora
+- Node.js 18+ (dashboard frontend)
+- Disk:
+  - ~20GB for typical experimentation
+  - significantly more if you plan to pull full PG-19 variants
 
 ## Setup
 
-### 1. Install Dependencies
+### 1. Install dependencies
 
 ```bash
 cd /home/cmf/Work/llm-testing
 uv sync
 ```
 
-This creates the `.venv` virtual environment and installs all Python dependencies from `pyproject.toml`.
+This creates `.venv` and installs Python dependencies from `pyproject.toml`.
 
-### 2. Verify Installation
+### 2. Verify CUDA visibility
 
 ```bash
 source .venv/bin/activate
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
 
-### 3. Download Training Corpora (Optional)
-
-The repo includes small corpora (verdict, tiny) for quick testing. For meaningful pretraining experiments, download larger datasets:
-
-```bash
-# See what's available
-python -m experiments.pretraining.download_corpora --list
-
-# Download recommended dataset
-python -m experiments.pretraining.download_corpora tinystories
-
-# Or download everything
-python -m experiments.pretraining.download_corpora --all
-```
-
-## First Experiment: Pretraining a GPT
-
-The fastest way to see something interesting is to pretrain a small GPT model.
-
-### Option A: Via the Dashboard (Recommended)
+### 3. Launch the unified dashboard
 
 ```bash
 ./run-dashboard.sh
 ```
 
-Open http://localhost:5173, navigate to **Pretraining**, set config to `nano`, corpus to `verdict`, epochs to `3`, and hit Start. Watch the loss curve and sample generations update in real time.
+Open the frontend URL printed by the launcher (default `http://127.0.0.1:5173`, auto-fallback if occupied).
 
-### Option B: Via the CLI
+## First 15 Minutes
+
+### 1. Explore MicroGPT review mode (educational track)
+
+In the sidebar, open **MicroGPT**:
+
+- Canonical source: `misc/microgpt.py`
+- Companion guide: `docs/microgpt_line_by_line.md`
+
+Use the section toggles to review line ranges side-by-side with explanation and math context.
+
+### 2. Run a pretraining smoke test
+
+In **Pretraining**:
+
+- Model: `nano`
+- Corpus: `verdict`
+- Epochs: `3`
+
+Start the run and watch live loss and generation updates.
+
+### 3. Pull a meaningful corpus
+
+```bash
+# List options
+python -m experiments.pretraining.download_corpora --list
+
+# Recommended first real dataset
+python -m experiments.pretraining.download_corpora tinystories
+```
+
+Then run `nano + tinystories` in the dashboard (or CLI) for a longer signal-bearing run.
+
+## CLI Alternative (No Dashboard)
 
 ```bash
 source .venv/bin/activate
 python -m experiments.pretraining.train --config nano --corpus verdict --epochs 3
-```
-
-**What to observe**:
-- Loss drops rapidly (the model is memorizing a small text)
-- Generated samples go from gibberish to recognizable fragments
-- Final loss should be very low (<0.5)
-
-For a more meaningful run, try TinyStories:
-
-```bash
-python -m experiments.pretraining.train --config nano --corpus tinystories --epochs 1
-```
-
-See [TRAINING-GUIDE.md](TRAINING-GUIDE.md) for a full walkthrough with learning exercises.
-
-## Other Experiments
-
-### Fine-Tuning (QLoRA)
-
-```bash
-python -m experiments.fine_tuning.basic_qlora
-```
-
-Loads Qwen2.5-7B-Instruct (4-bit quantized) and fine-tunes on a small dataset.
-
-### Attention Visualization
-
-```bash
-python -m experiments.attention.compare_experiment
-```
-
-### Representation Probing
-
-```bash
-python -m experiments.probing.run_analysis
-```
-
-### Paper Reproduction
-
-```bash
-python -m experiments.paper_reproduction.bayesian_geometry.experiment
 ```
 
 ## Key Commands
@@ -109,55 +84,62 @@ python -m experiments.paper_reproduction.bayesian_geometry.experiment
 | Task | Command |
 |------|---------|
 | Install dependencies | `uv sync` |
-| Launch dashboard | `./run-dashboard.sh` |
-| Pretrain (CLI) | `python -m experiments.pretraining.train --config nano --corpus verdict --epochs 3` |
-| Fine-tune | `python -m experiments.fine_tuning.basic_qlora` |
-| LR comparison | `python -m experiments.learning_rate.experiment` |
-| LoRA rank test | `python -m experiments.lora_rank.experiment` |
-| Attention analysis | `python -m experiments.attention.compare_experiment` |
-| Download corpora | `python -m experiments.pretraining.download_corpora --list` |
+| Start dashboard | `./run-dashboard.sh` |
+| Dashboard options | `./run-dashboard.sh --help` |
+| Pretraining smoke test (CLI) | `python -m experiments.pretraining.train --config nano --corpus verdict --epochs 3` |
+| List downloadable corpora | `python -m experiments.pretraining.download_corpora --list` |
+| Download TinyStories | `python -m experiments.pretraining.download_corpora tinystories` |
+| Fine-tuning experiment | `python -m experiments.fine_tuning.basic_qlora` |
+| Attention comparison | `python -m experiments.attention.compare_experiment` |
+| Probing analysis | `python -m experiments.probing.run_analysis` |
 
 ## Output Locations
 
-Experiments save outputs to:
-```
+Common generated artifacts:
+
+```text
 outputs/
-├── pretraining/             # Checkpoints, run history
-├── fine_tuning/             # Training logs, checkpoints
-├── learning_rate/           # LR comparison results
-├── lora_rank/               # Rank comparison results
-├── attention/               # Attention visualizations
-├── representation_analysis/ # Activation statistics
-└── paper_reproduction/      # Claim test results
+├── pretraining/
+│   ├── runs/                       # persisted run metadata and metrics history
+│   └── <config>_<corpus>_b*_ctx*/ # checkpoint directories
+├── fine_tuning/
+│   ├── runs/                       # fine-tuning run outputs
+│   └── adapters/                   # adapter checkpoints surfaced by API
+├── learning_rate_exploration/
+├── lora_rank_comparison/
+├── forgetting_test/
+├── representation_analysis/
+└── paper_reproduction/
 ```
 
 ## Troubleshooting
 
-### Out of Memory
+### Out of memory
 
-- Use the `nano` config (smallest model)
-- Reduce batch size in the dashboard or via CLI args
+- Start with `nano`
+- Reduce batch size
 - Reduce context length
+- In dashboard pretraining controls, switch to memory-oriented settings:
+  - `attention_impl=sdpa`
+  - `precision=bf16` (if supported)
+  - `gradient_checkpointing=true`
 
-### CUDA Not Found
+### CUDA not detected
 
 ```bash
 nvidia-smi
 python -c "import torch; print(torch.cuda.is_available())"
 ```
 
-### Import Errors
+### Dashboard won’t start
 
-Ensure you're in the project root with the venv activated:
-```bash
-cd /home/cmf/Work/llm-testing
-source .venv/bin/activate
-```
+- Ensure `.venv` exists (`uv sync`)
+- Ensure Node is installed (`node -v`)
+- Re-run `./run-dashboard.sh` (it installs `dashboard/node_modules` automatically if missing)
 
 ## Next Steps
 
-1. Run through the [TRAINING-GUIDE.md](TRAINING-GUIDE.md) exercises
-2. Explore the dashboard's run comparison features
-3. Try different model configs and corpora
-4. Move on to attention and probing experiments
-5. Track questions in [QUESTIONS.md](QUESTIONS.md)
+1. Follow [TRAINING-GUIDE.md](TRAINING-GUIDE.md) for the expanded pretraining workflow.
+2. Use run history overlays in **Pretraining** to compare two runs directly.
+3. Move to **Attention** and **Probing** once you have checkpoints to inspect.
+4. Track new hypotheses in [QUESTIONS.md](QUESTIONS.md).
