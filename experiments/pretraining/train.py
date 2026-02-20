@@ -39,15 +39,13 @@ from torch.utils.data import DataLoader
 import argparse
 import math
 import time
-from pathlib import Path
-from typing import Optional, Dict, Any, Tuple, List
-from datetime import datetime
+from typing import Optional, Dict, List
 
 from .model import GPTModel
 from .config import GPTConfig, GPT_CONFIGS, get_config
 from .tokenizer import Tokenizer
-from .data import get_dataloader, create_train_val_dataloaders
-from .checkpoint import save_checkpoint, load_checkpoint, get_latest_checkpoint
+from .data import create_train_val_dataloaders
+from .checkpoint import save_checkpoint, load_checkpoint
 from .generate import generate_text
 
 
@@ -215,6 +213,9 @@ def train_model(
     sample_prompt: str = "Every effort moves you",
     grad_clip: Optional[float] = 1.0,
     callback: Optional[callable] = None,
+    start_step: int = 0,
+    completed_epochs: int = 0,
+    start_batches_in_epoch: int = 0,
 ) -> Dict[str, List]:
     """
     Main training loop for GPT pretraining.
@@ -266,16 +267,22 @@ def train_model(
     }
 
     # Counters
-    global_step = 0
+    global_step = start_step
     tokens_seen = 0
     start_time = time.time()
 
     # Training loop
     model.train()
     for epoch in range(num_epochs):
+        if epoch < completed_epochs:
+            continue
+
         epoch_start_time = time.time()
 
-        for batch in train_loader:
+        for batch_idx, batch in enumerate(train_loader):
+            if epoch == completed_epochs and batch_idx < start_batches_in_epoch:
+                continue
+
             # Get batch data
             input_ids = batch['input_ids']
             labels = batch['labels']
@@ -359,7 +366,7 @@ def train_model(
                     config_name=config_name,
                     optimizer_name="adamw",
                     step=global_step,
-                    epoch=epoch,
+                    epoch=epoch + 1,
                     train_loss=train_loss,
                     val_loss=val_loss,
                 )
@@ -388,7 +395,7 @@ def train_model(
     # Final evaluation
     final_train_loss = calc_loss_loader(train_loader, model, device)
     final_val_loss = calc_loss_loader(val_loader, model, device)
-    print(f"\nTraining complete!")
+    print("\nTraining complete!")
     print(f"Final Train Loss: {final_train_loss:.4f}")
     print(f"Final Val Loss: {final_val_loss:.4f}")
     print(f"Total tokens seen: {tokens_seen:,}")
@@ -581,9 +588,7 @@ def main():
     print(f"Train batches: {len(train_loader)}")
     print(f"Val batches: {len(val_loader)}")
 
-    # Calculate total training steps
-    total_steps = len(train_loader) * args.epochs
-    print(f"Total training steps: {total_steps}")
+    updates_per_epoch = max(1, len(train_loader))
 
     # Create model
     model = GPTModel(config)
@@ -597,22 +602,43 @@ def main():
         weight_decay=args.weight_decay,
     )
 
-    # Create scheduler
-    scheduler = get_lr_scheduler(
-        optimizer=optimizer,
-        num_warmup_steps=args.warmup_steps,
-        num_training_steps=total_steps,
-    )
-
     # Resume from checkpoint if specified
-    start_epoch = 0
+    start_step = 0
+    completed_epochs = 0
+    start_batches_in_epoch = 0
+    target_epochs = args.epochs
     if args.resume:
         print(f"\nResuming from checkpoint: {args.resume}")
         model, optimizer, metadata = load_checkpoint(
             args.resume, model, optimizer, device
         )
-        start_epoch = metadata.get('epoch', 0)
-        print(f"Resumed from step {metadata.get('step', 0)}, epoch {start_epoch}")
+        start_step = int(metadata.get('step', 0) or 0)
+        completed_epochs = start_step // updates_per_epoch
+        start_batches_in_epoch = start_step % updates_per_epoch
+        if target_epochs <= completed_epochs:
+            # If checkpoint is already at/past requested epoch target, interpret epochs as additional.
+            target_epochs = completed_epochs + args.epochs
+            print(
+                "Requested epochs are at/below checkpoint progress; "
+                f"running {args.epochs} additional epoch(s) to target epoch {target_epochs}."
+            )
+        print(
+            f"Resumed from step {start_step}, checkpoint epoch {metadata.get('epoch', 0)}, "
+            f"continuing from epoch index {completed_epochs}."
+        )
+
+    total_steps = updates_per_epoch * target_epochs
+    print(f"Total training steps: {total_steps}")
+
+    # Create scheduler with resumed target horizon
+    scheduler = get_lr_scheduler(
+        optimizer=optimizer,
+        num_warmup_steps=args.warmup_steps,
+        num_training_steps=total_steps,
+    )
+    if start_step > 0:
+        for _ in range(start_step):
+            scheduler.step()
 
     # Determine checkpoint saving
     save_checkpoints = args.save and not args.no_save
@@ -632,7 +658,7 @@ def main():
         optimizer=optimizer,
         scheduler=scheduler,
         device=device,
-        num_epochs=args.epochs,
+        num_epochs=target_epochs,
         eval_freq=args.eval_freq,
         eval_iters=args.eval_iters,
         save_checkpoints=save_checkpoints,
@@ -642,6 +668,9 @@ def main():
         tokenizer=tokenizer,
         sample_prompt="Every effort moves you",
         grad_clip=args.grad_clip if args.grad_clip > 0 else None,
+        start_step=start_step,
+        completed_epochs=completed_epochs,
+        start_batches_in_epoch=start_batches_in_epoch,
     )
 
     return history

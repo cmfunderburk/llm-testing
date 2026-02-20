@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 RUNS_BASE_DIR = Path("outputs/pretraining/runs")
 RUN_META_FILENAME = "run_meta.json"
 RUN_HISTORY_FILENAME = "history.jsonl"
+PRETRAINING_CONFIG_NAMES = {"nano", "small", "medium", "large", "xlarge"}
 
 
 def _utcnow_iso() -> str:
@@ -486,7 +487,7 @@ class TrainingManager:
         from experiments.pretraining.data import create_train_val_dataloaders
         from experiments.pretraining.train import calc_loss_batch, calc_loss_loader, get_lr_scheduler
         from experiments.pretraining.generate import generate_text
-        from experiments.pretraining.checkpoint import save_checkpoint, list_checkpoints
+        from experiments.pretraining.checkpoint import save_checkpoint
         import time
 
         run_id = self.status.run_id
@@ -519,7 +520,7 @@ class TrainingManager:
 
             # Handle resume from checkpoint
             start_step = 0
-            start_epoch = 0
+            checkpoint_epoch = 0
             resumed_optimizer_state = None
 
             if config.resume_from:
@@ -530,20 +531,12 @@ class TrainingManager:
                     "message": f"Loading checkpoint {config.resume_from}...",
                 })
 
-                # Parse checkpoint_id to find the checkpoint path
-                checkpoint_config_name, checkpoint_step = _parse_checkpoint_id(config.resume_from)
-                checkpoints = list_checkpoints(checkpoint_config_name)
-                checkpoint_path = None
-                checkpoint_metadata = None
+                try:
+                    checkpoint_metadata = _resolve_checkpoint_from_id(config.resume_from)
+                except ValueError as e:
+                    raise ValueError(str(e))
 
-                for ckpt in checkpoints:
-                    if ckpt['step'] == checkpoint_step:
-                        checkpoint_path = ckpt['path']
-                        checkpoint_metadata = ckpt
-                        break
-
-                if not checkpoint_path:
-                    raise ValueError(f"Checkpoint not found: {config.resume_from}")
+                checkpoint_path = checkpoint_metadata["path"]
 
                 # Load the checkpoint once, extracting optimizer state
                 # (avoid loading the file twice which doubles memory usage)
@@ -587,7 +580,7 @@ class TrainingManager:
                     torch.cuda.empty_cache()
 
                 start_step = metadata.get('step', 0)
-                start_epoch = metadata.get('epoch', 0)
+                checkpoint_epoch = metadata.get('epoch', 0)
 
                 # Warn if training params differ
                 warnings = []
@@ -612,7 +605,7 @@ class TrainingManager:
                     "type": "status",
                     "state": "loading",
                     "run_id": run_id,
-                    "message": f"Resumed from step {start_step}, epoch {start_epoch}",
+                    "message": f"Resumed from step {start_step}, epoch {checkpoint_epoch}",
                 })
             else:
                 # Create fresh model
@@ -741,7 +734,29 @@ class TrainingManager:
 
             grad_accum_steps = max(1, config.grad_accum_steps)
             updates_per_epoch = max(1, math.ceil(len(train_loader) / grad_accum_steps))
-            total_steps = updates_per_epoch * config.epochs
+            resumed_completed_epochs = 0
+            start_micro_batch_in_epoch = 0
+            if start_step > 0:
+                resumed_completed_epochs = start_step // updates_per_epoch
+                start_update_in_epoch = start_step % updates_per_epoch
+                start_micro_batch_in_epoch = min(
+                    len(train_loader),
+                    start_update_in_epoch * grad_accum_steps,
+                )
+
+            target_epochs = config.epochs
+            if config.resume_from and target_epochs <= resumed_completed_epochs:
+                # Treat `epochs` as additional epochs when resuming from or past the configured target.
+                target_epochs = resumed_completed_epochs + config.epochs
+                await self.broadcast_metrics({
+                    "type": "warning",
+                    "message": (
+                        f"Resume checkpoint is already at epoch {resumed_completed_epochs}. "
+                        f"Running {config.epochs} additional epoch(s) (target epoch {target_epochs})."
+                    ),
+                })
+
+            total_steps = updates_per_epoch * target_epochs
             scheduler = get_lr_scheduler(optimizer, config.warmup_steps, total_steps)
 
             # Configure mixed precision behavior.
@@ -808,27 +823,25 @@ class TrainingManager:
 
             model.train()
             optimizer.zero_grad(set_to_none=True)
-            for epoch in range(config.epochs):
+            for epoch in range(target_epochs):
                 # Skip epochs that were completed before resume
-                if epoch < start_epoch:
+                if epoch < resumed_completed_epochs:
                     continue
 
                 self.status.current_epoch = epoch + 1
                 self._current_epoch = epoch + 1
 
-                steps_in_epoch = 0
                 accumulated_micro_steps = 0
                 accumulated_loss = 0.0
                 micro_batches_per_epoch = len(train_loader)
                 for batch_idx, batch in enumerate(train_loader):
                     # If resuming mid-epoch, skip batches until we reach start_step
-                    if config.resume_from and epoch == start_epoch:
-                        steps_in_epoch += 1
-                        # start_step is tracked as optimizer updates, so map to micro-batches.
-                        start_update_in_epoch = start_step - (start_epoch * updates_per_epoch)
-                        start_micro_batch_in_epoch = max(0, start_update_in_epoch * grad_accum_steps)
-                        if steps_in_epoch <= start_micro_batch_in_epoch:
-                            continue
+                    if (
+                        config.resume_from
+                        and epoch == resumed_completed_epochs
+                        and batch_idx < start_micro_batch_in_epoch
+                    ):
+                        continue
 
                     if self.should_stop:
                         self.status.state = "completed"
@@ -1110,7 +1123,7 @@ class TrainingManager:
                 config_name=config.config_name,
                 optimizer_name=config.optimizer,
                 step=global_step,
-                epoch=config.epochs,
+                epoch=target_epochs,
                 train_loss=self.status.train_loss,
                 val_loss=self.status.val_loss,
                 filename="checkpoint_final.pt",
@@ -1395,65 +1408,114 @@ async def list_checkpoints_endpoint(config_name: str = "nano"):
     return result
 
 
-def _parse_checkpoint_id(checkpoint_id: str) -> tuple:
+def _parse_checkpoint_id(checkpoint_id: str) -> Dict[str, Any]:
     """
-    Parse checkpoint ID to extract config_name and step.
+    Parse a checkpoint ID into a selector.
 
-    Handles both formats:
+    Supported formats:
     - New: nano_verdict_b4_ctx256_step1000
-    - Legacy: nano_step1000 or nano_1000
+    - Legacy: nano_step1000
+    - Legacy: nano_1000
     """
-    import re
+    new_format = re.match(
+        r"^(?P<config>[A-Za-z0-9]+)_(?P<corpus>.+)_b(?P<batch>\d+)_ctx(?P<context>\d+)_step(?P<step>\d+)$",
+        checkpoint_id,
+    )
+    if new_format and new_format.group("config") in PRETRAINING_CONFIG_NAMES:
+        return {
+            "config_name": new_format.group("config"),
+            "step": int(new_format.group("step")),
+            "corpus": new_format.group("corpus"),
+            "batch_size": int(new_format.group("batch")),
+            "context_length": int(new_format.group("context")),
+        }
 
-    # Try new format first: {config}_{corpus}_b{batch}_ctx{ctx}_step{step}
-    new_format = re.match(r'^(\w+)_\w+_b\d+_ctx\d+_step(\d+)$', checkpoint_id)
-    if new_format:
-        return new_format.group(1), int(new_format.group(2))
-
-    # Try format with _step suffix: nano_step1000
-    step_format = re.match(r'^(\w+)_step(\d+)$', checkpoint_id)
+    step_format = re.match(r"^([A-Za-z0-9_]+)_step(\d+)$", checkpoint_id)
     if step_format:
-        return step_format.group(1), int(step_format.group(2))
+        return {
+            "config_name": step_format.group(1),
+            "step": int(step_format.group(2)),
+            "corpus": None,
+            "batch_size": None,
+            "context_length": None,
+        }
 
-    # Legacy format: nano_1000
-    parts = checkpoint_id.rsplit('_', 1)
+    parts = checkpoint_id.rsplit("_", 1)
     if len(parts) == 2:
         try:
-            return parts[0], int(parts[1])
+            return {
+                "config_name": parts[0],
+                "step": int(parts[1]),
+                "corpus": None,
+                "batch_size": None,
+                "context_length": None,
+            }
         except ValueError:
             pass
 
     raise ValueError(f"Invalid checkpoint ID format: {checkpoint_id}")
 
 
+def _checkpoint_matches_selector(checkpoint: Dict[str, Any], selector: Dict[str, Any]) -> bool:
+    if _safe_int(checkpoint.get("step"), -1) != selector["step"]:
+        return False
+
+    if selector.get("corpus") is not None and checkpoint.get("corpus") != selector["corpus"]:
+        return False
+
+    if (
+        selector.get("batch_size") is not None
+        and _safe_int(checkpoint.get("batch_size"), -1) != selector["batch_size"]
+    ):
+        return False
+
+    if (
+        selector.get("context_length") is not None
+        and _safe_int(checkpoint.get("context_length"), -1) != selector["context_length"]
+    ):
+        return False
+
+    return True
+
+
+def _resolve_checkpoint_from_id(checkpoint_id: str) -> Dict[str, Any]:
+    from experiments.pretraining.checkpoint import list_checkpoints
+
+    selector = _parse_checkpoint_id(checkpoint_id)
+    checkpoints = list_checkpoints(selector["config_name"])
+    matching = [ckpt for ckpt in checkpoints if _checkpoint_matches_selector(ckpt, selector)]
+
+    if not matching:
+        raise ValueError(f"Checkpoint not found: {checkpoint_id}")
+
+    # Deterministic tie-breaker for legacy IDs that may match more than one checkpoint.
+    matching.sort(key=lambda ckpt: (ckpt.get("timestamp") or "", ckpt.get("path") or ""))
+    return matching[-1]
+
+
 @router.get("/checkpoints/{checkpoint_id}", response_model=CheckpointInfo)
 async def get_checkpoint(checkpoint_id: str):
     """Get details for a specific checkpoint."""
-    from experiments.pretraining.checkpoint import list_checkpoints
-
     try:
-        config_name, step = _parse_checkpoint_id(checkpoint_id)
+        ckpt = _resolve_checkpoint_from_id(checkpoint_id)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        detail = str(e)
+        status_code = 400 if detail.startswith("Invalid checkpoint ID format") else 404
+        raise HTTPException(status_code=status_code, detail=detail)
 
-    checkpoints = list_checkpoints(config_name)
-    for ckpt in checkpoints:
-        if ckpt['step'] == step:
-            return CheckpointInfo(
-                id=checkpoint_id,
-                path=ckpt['path'],
-                step=ckpt['step'],
-                epoch=ckpt['epoch'],
-                train_loss=_sanitize_float(ckpt['train_loss']),
-                val_loss=_sanitize_float(ckpt['val_loss']),
-                timestamp=ckpt['timestamp'],
-                corpus=ckpt.get('corpus'),
-                batch_size=ckpt.get('batch_size'),
-                context_length=ckpt.get('context_length'),
-                optimizer=ckpt.get('optimizer_name'),
-            )
-
-    raise HTTPException(status_code=404, detail="Checkpoint not found")
+    return CheckpointInfo(
+        id=checkpoint_id,
+        path=ckpt['path'],
+        step=ckpt['step'],
+        epoch=ckpt['epoch'],
+        train_loss=_sanitize_float(ckpt['train_loss']),
+        val_loss=_sanitize_float(ckpt['val_loss']),
+        timestamp=ckpt['timestamp'],
+        corpus=ckpt.get('corpus'),
+        batch_size=ckpt.get('batch_size'),
+        context_length=ckpt.get('context_length'),
+        optimizer=ckpt.get('optimizer_name'),
+    )
 
 
 class DeleteCheckpointsRequest(BaseModel):
@@ -1544,29 +1606,20 @@ async def generate(request: GenerateRequest):
     from experiments.pretraining.config import get_config
     from experiments.pretraining.tokenizer import Tokenizer
     from experiments.pretraining.generate import generate_text
-    from experiments.pretraining.checkpoint import load_checkpoint, list_checkpoints
+    from experiments.pretraining.checkpoint import load_checkpoint
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     tokenizer = Tokenizer()
 
     if request.checkpoint_id:
         try:
-            config_name, step = _parse_checkpoint_id(request.checkpoint_id)
+            checkpoint = _resolve_checkpoint_from_id(request.checkpoint_id)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            detail = str(e)
+            status_code = 400 if detail.startswith("Invalid checkpoint ID format") else 404
+            raise HTTPException(status_code=status_code, detail=detail)
 
-        # Find the specific checkpoint by step
-        checkpoints = list_checkpoints(config_name)
-        checkpoint_path = None
-        for ckpt in checkpoints:
-            if ckpt['step'] == step:
-                checkpoint_path = ckpt['path']
-                break
-
-        if not checkpoint_path:
-            raise HTTPException(status_code=404, detail="Checkpoint not found")
-
-        model, _, _ = load_checkpoint(checkpoint_path, device=device)
+        model, _, _ = load_checkpoint(checkpoint["path"], device=device)
     else:
         config = get_config("nano")
         model = GPTModel(config)
